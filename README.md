@@ -27,6 +27,16 @@ This project is a small bridge for people who already use Codex CLI on a machine
 `telecodex` does not call the OpenAI API itself. Instead, it reuses the machine's existing Codex CLI login state and shells out to `codex exec`.  
 `telecodex` 自体は OpenAI API を直接呼びません。代わりに、そのマシンにある既存の Codex CLI のログイン状態を再利用し、`codex exec` を外部実行します。
 
+```mermaid
+flowchart LR
+    U[Telegram User] --> B[Telegram Bot]
+    B --> T[telecodex bridge.py]
+    T --> C[Local codex exec]
+    C --> T
+    T --> B
+    B --> U
+```
+
 Current request flow:  
 現在のリクエスト処理の流れ:
 
@@ -41,48 +51,42 @@ Current request flow:
 5. The reply is posted back to Telegram  
    返信が Telegram に投稿される
 
-## Why This Shape / この構成を選ぶ理由
+## Why Use This Design / この設計が向くケース
 
-`telecodex` is optimized for `Telegram -> local bridge -> Codex CLI` rather than `Telegram -> API -> app server`. That makes it a good fit for personal automation on a machine you already control.  
-`telecodex` は `Telegram -> API -> アプリサーバー` よりも、`Telegram -> ローカルブリッジ -> Codex CLI` に最適化されています。そのため、すでに自分で管理しているマシン上の個人用自動化に向いています。
+`telecodex` is built around `Telegram -> local bridge -> Codex CLI`. It is most useful when you want Telegram as a thin remote control for a machine that already has Codex CLI configured.  
+`telecodex` は `Telegram -> ローカルブリッジ -> Codex CLI` を前提にしています。すでに Codex CLI を設定済みのマシンを、Telegram から薄い操作窓口として使いたい場合に最も向いています。
 
-Advantages:  
-利点:
+Why it can be a good fit:  
+向いている理由:
 
-- Reuses your existing local environment with minimal extra setup  
-  いまの手元環境を、そのまま最小限の追加設定で使いやすい
-- Makes it easy to reach Raspberry Pi local files, git repositories, shell commands, and `systemd` state  
-  Raspberry Pi 上のローカルファイル、git リポジトリ、shell コマンド、`systemd` の状態に触れやすい
-- Reuses the workflow you already have around `codex exec`  
-  既存の `codex exec` ワークフローをそのまま流用できる
-- Keeps the implementation simple when the bot is only for one person  
-  個人用に限るなら実装をかなりシンプルに保てる
+- Reuses an existing local CLI workflow instead of requiring a separate API service  
+  別の API サービスを立てず、既存のローカル CLI ワークフローをそのまま使える
+- Keeps the implementation small for single-user or tightly controlled setups  
+  単独利用や厳しく制御した運用では、実装を小さく保ちやすい
+- Makes it straightforward to connect Telegram with local tools such as shell commands, files, git, and `systemd`  
+  shell コマンド、ファイル、git、`systemd` などのローカル操作と Telegram をつなぎやすい
 
-Tradeoffs:  
-注意点:
+Tradeoffs to understand:  
+理解しておくべき注意点:
 
-- You are responsible for keeping the bridge process alive  
-  ブリッジプロセスを落とさず維持する面倒を見る必要がある
-- Error notifications, retries, timeouts, and log handling need to be built and operated by you  
-  エラー通知、再試行、タイムアウト、ログ整備を自前で作って運用する必要がある
-- Multi-user support and permission boundaries are weaker than in a dedicated API service design  
-  専用の API サービス設計に比べると、複数ユーザー対応や権限制御は弱くなりやすい
-- The boundary around who can do what is easy to keep informal unless you design it carefully  
-  誰がどこまで使えるかの境界が、意識して設計しないと曖昧になりやすい
-- A Telegram bot that can trigger local machine actions has a larger blast radius if something goes wrong  
-  Telegram Bot からローカルマシン操作まで届くため、事故時の影響範囲が大きくなりやすい
+- You operate the bridge process yourself, including uptime and failure recovery  
+  稼働維持や障害復旧を含め、ブリッジプロセスの運用は自分で見る必要がある
+- Logging, retries, timeouts, and operational safeguards are your responsibility  
+  ログ、再試行、タイムアウト、運用上の安全策は自前で整える必要がある
+- Permission boundaries are looser than in a dedicated multi-user API design  
+  専用の複数ユーザー向け API 設計に比べると、権限境界は緩くなりやすい
+- If the bot can trigger local actions, mistakes can affect the machine directly  
+  Bot からローカル操作を起こせる以上、ミスがそのままマシンに影響しうる
 
-Best fit:  
-向いている用途:
+Typical use cases:  
+典型的な用途:
 
-- Personal use only  
-  自分専用
-- Managing a home Raspberry Pi from Telegram  
-  家の Raspberry Pi 管理
-- Local development assistance  
-  ローカル開発補助
-- Fast, pragmatic workflows over service-style architecture  
-  サービス設計より小回りを重視する用途
+- Personal automation  
+  個人用自動化
+- Remote access to a development machine you already manage  
+  すでに自分で管理している開発マシンへのリモート操作
+- Lightweight operational helpers rather than a public-facing service  
+  公開サービスではなく、軽量な運用補助
 
 ## Requirements / 必要なもの
 
