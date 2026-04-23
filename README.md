@@ -41,6 +41,49 @@ Current request flow:
 5. The reply is posted back to Telegram  
    返信が Telegram に投稿される
 
+## Why This Shape / この構成を選ぶ理由
+
+`telecodex` is optimized for `Telegram -> local bridge -> Codex CLI` rather than `Telegram -> API -> app server`. That makes it a good fit for personal automation on a machine you already control.  
+`telecodex` は `Telegram -> API -> アプリサーバー` よりも、`Telegram -> ローカルブリッジ -> Codex CLI` に最適化されています。そのため、すでに自分で管理しているマシン上の個人用自動化に向いています。
+
+Advantages:  
+利点:
+
+- Reuses your existing local environment with minimal extra setup  
+  いまの手元環境を、そのまま最小限の追加設定で使いやすい
+- Makes it easy to reach Raspberry Pi local files, git repositories, shell commands, and `systemd` state  
+  Raspberry Pi 上のローカルファイル、git リポジトリ、shell コマンド、`systemd` の状態に触れやすい
+- Reuses the workflow you already have around `codex exec`  
+  既存の `codex exec` ワークフローをそのまま流用できる
+- Keeps the implementation simple when the bot is only for one person  
+  個人用に限るなら実装をかなりシンプルに保てる
+
+Tradeoffs:  
+注意点:
+
+- You are responsible for keeping the bridge process alive  
+  ブリッジプロセスを落とさず維持する面倒を見る必要がある
+- Error notifications, retries, timeouts, and log handling need to be built and operated by you  
+  エラー通知、再試行、タイムアウト、ログ整備を自前で作って運用する必要がある
+- Multi-user support and permission boundaries are weaker than in a dedicated API service design  
+  専用の API サービス設計に比べると、複数ユーザー対応や権限制御は弱くなりやすい
+- The boundary around who can do what is easy to keep informal unless you design it carefully  
+  誰がどこまで使えるかの境界が、意識して設計しないと曖昧になりやすい
+- A Telegram bot that can trigger local machine actions has a larger blast radius if something goes wrong  
+  Telegram Bot からローカルマシン操作まで届くため、事故時の影響範囲が大きくなりやすい
+
+Best fit:  
+向いている用途:
+
+- Personal use only  
+  自分専用
+- Managing a home Raspberry Pi from Telegram  
+  家の Raspberry Pi 管理
+- Local development assistance  
+  ローカル開発補助
+- Fast, pragmatic workflows over service-style architecture  
+  サービス設計より小回りを重視する用途
+
 ## Requirements / 必要なもの
 
 - Linux machine with Python 3  
