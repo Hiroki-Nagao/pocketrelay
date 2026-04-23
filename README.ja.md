@@ -70,10 +70,24 @@ Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の 
   "allowed_username": "@your_username",
   "provider": "codex",
   "model": "gpt-5.4",
+  "cli_command_template": [
+    "/home/your_user/.nvm/versions/node/v24.15.0/bin/codex",
+    "exec",
+    "--skip-git-repo-check",
+    "--ephemeral",
+    "-C",
+    "{workdir}",
+    "-m",
+    "{model}",
+    "-o",
+    "{output_path}",
+    "{prompt}"
+  ],
   "workdir": "/home/your_user",
   "max_history": 12,
   "telegram_timeout_seconds": 25,
-  "cli_timeout_seconds": 180
+  "cli_timeout_seconds": 180,
+  "system_prompt": "You are Codex, a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.\nKeep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,\nGitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.\nIf you are unsure, state uncertainty directly."
 }
 ```
 
@@ -107,6 +121,25 @@ Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の 
     "--model",
     "{model}",
     "--prompt",
+    "{prompt}"
+  ],
+  "cli_response_mode": "stdout"
+}
+```
+
+Claude Code をバイナリの絶対パス付きで明示する例:
+
+```json
+{
+  "provider": "claude",
+  "model": "sonnet",
+  "cli_command_template": [
+    "/home/your_user/.nvm/versions/node/v24.15.0/bin/claude",
+    "-p",
+    "--output-format",
+    "text",
+    "--model",
+    "{model}",
     "{prompt}"
   ],
   "cli_response_mode": "stdout"
