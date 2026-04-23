@@ -1,58 +1,40 @@
 # Pocketrelay
 
-English comes first in this README, and each section is followed by Japanese.  
-この README は英語が先にあり、各セクションのあとに日本語が続きます。
+[日本語版はこちら](README.ja.md)
 
-Pocketrelay is a lightweight way to work through local AI coding CLIs such as Codex CLI, Claude Code, and Gemini CLI from your phone.  
-Pocketrelay は、Codex CLI、Claude Code、Gemini CLI などのローカル AI コーディング CLI を、スマホ経由で利用しながら開発を進めるための軽量ブリッジです。
+Pocketrelay is a lightweight way to work through local AI coding CLIs such as Codex CLI, Claude Code, and Gemini CLI from your phone.
 
-It is not specific to Raspberry Pi. A Raspberry Pi is just one example of a small always-on host; Pocketrelay is meant for any user-managed machine where your CLI tools, repositories, and auth state already live.  
-Raspberry Pi 専用ではありません。Raspberry Pi は常時起動しておく小型ホストの一例にすぎず、Pocketrelay は CLI ツール、リポジトリ、認証状態がすでに揃っている任意の自己管理マシンで使うことを想定しています。
+It is not specific to Raspberry Pi. A Raspberry Pi is just one example of a small always-on host; Pocketrelay is meant for any user-managed machine where your CLI tools, repositories, and auth state already live.
 
-## What Pocketrelay Means / 名前の意味
+## What Pocketrelay Means
 
-`Pocketrelay` means "relay my local development environment to my pocket." The idea is simple: even when you are away from your desk, you can open Telegram on your phone and keep using the machine and CLI setup you already trust.  
-`Pocketrelay` は「自分のローカル開発環境をポケットまで中継する」という意味です。席を離れていても、スマホで Telegram を開けば、使い慣れた自分のマシンと CLI 環境をそのまま使える、という考え方に基づいています。
+`Pocketrelay` means "relay my local development environment to my pocket." The idea is simple: even when you are away from your desk, you can open Telegram on your phone and keep using the machine and CLI setup you already trust.
 
-## Why It Exists / 何がうれしいか
+## Why It Exists
 
-Pocketrelay is not just another API wrapper. Its value is that it reuses your existing local setup instead of asking you to rebuild your workflow around a hosted service.  
-Pocketrelay は単なる API ラッパーではありません。ホストされた別サービスに合わせてワークフローを組み直すのではなく、手元のローカル環境をそのまま活かせる点に価値があります。
+Pocketrelay is not just another API wrapper. Its value is that it reuses your existing local setup instead of asking you to rebuild your workflow around a hosted service.
 
 Why that helps:
 
-- Reuse the CLI login state you already have on your machine  
-  すでにマシン上にある CLI のログイン状態をそのまま使える
-- Keep using the same local tools, repos, shell environment, and files you already work with  
-  いつも使っているローカルのツール、リポジトリ、shell 環境、ファイルをそのまま活用できる
-- Send a prompt from your phone during a break instead of sitting at your desk  
-  机に向かわなくても、休憩中にスマホからプロンプトを投げられる
-- Avoid standing up a separate API service just to reach your own machine  
-  自分のマシンに到達するためだけに、別の API サービス層を立てなくてよい
-- Switch between Codex, Claude, Gemini, or a custom CLI behind the same Telegram entry point  
-  同じ Telegram の窓口の裏側で、Codex、Claude、Gemini、独自 CLI を切り替えられる
+- Reuse the CLI login state you already have on your machine
+- Keep using the same local tools, repos, shell environment, and files you already work with
+- Send a prompt from your phone during a break instead of sitting at your desk
+- Avoid standing up a separate API service just to reach your own machine
+- Switch between Codex, Claude, Gemini, or a custom CLI behind the same Telegram entry point
 
-## What It Does / 何をするものか
+## What It Does
 
-- Receives Telegram messages through a bot  
-  Telegram のメッセージを Bot 経由で受け取ります
-- Restricts access to one allowed Telegram username  
-  許可した 1 つの Telegram ユーザー名だけにアクセスを制限します
-- Invokes a local AI CLI for each request  
-  各リクエストごとにローカルの AI CLI を実行します
-- Supports built-in presets for `codex`, `claude`, and `gemini`  
-  `codex`、`claude`、`gemini` の組み込みプリセットがあります
-- Can switch provider per chat through Telegram commands such as `/provider codex`  
-  `/provider codex` のような Telegram コマンドで、チャットごとに provider を切り替えられます
-- Allows a fully custom command template when presets are not enough  
-  プリセットで足りない場合は、完全なカスタムコマンドテンプレートも使えます
-- Stores a short local conversation history per chat  
-  チャットごとに短い会話履歴をローカル保存します
+- Receives Telegram messages through a bot
+- Restricts access to one allowed Telegram username
+- Invokes a local AI CLI for each request
+- Supports built-in presets for `codex`, `claude`, and `gemini`
+- Can switch provider per chat through Telegram commands such as `/provider codex`
+- Allows a fully custom command template when presets are not enough
+- Stores a short local conversation history per chat
 
-## How It Works / 仕組み
+## How It Works
 
-Pocketrelay does not call OpenAI, Anthropic, or Google APIs directly. Instead, it reuses the login state and local behavior of a CLI that is already installed on your machine, then invokes that CLI for each Telegram message.  
-Pocketrelay 自体は OpenAI、Anthropic、Google の API を直接呼びません。代わりに、そのマシンに入っている CLI のログイン状態とローカルでの動作を再利用し、Telegram のメッセージごとに CLI を呼び出します。
+Pocketrelay does not call OpenAI, Anthropic, or Google APIs directly. Instead, it reuses the login state and local behavior of a CLI that is already installed on your machine, then invokes that CLI for each Telegram message.
 
 ```mermaid
 flowchart LR
@@ -69,31 +51,18 @@ flowchart LR
     B --> U
 ```
 
-## Supported Providers / 対応プロバイダ
+## Supported Providers
 
-- `codex`  
-  Runs `codex exec ...` and reads the final answer from the output file.
-- `claude`  
-  Runs `claude -p ...` and reads the answer from stdout.
-- `gemini`  
-  Runs `gemini -p ... --output-format json` and reads the `response` field.
+- `codex` — Runs `codex exec ...` and reads the final answer from the output file.
+- `claude` — Runs `claude -p ...` and reads the answer from stdout.
+- `gemini` — Runs `gemini -p ... --output-format json` and reads the `response` field.
 
-`codex`  
-`codex exec ...` を実行し、出力ファイルから最終返答を読みます。
-
-`claude`  
-`claude -p ...` を実行し、stdout から返答を読みます。
-
-`gemini`  
-`gemini -p ... --output-format json` を実行し、`response` フィールドを読みます。
-
-Anthropic documents `claude -p` and `--output-format`; Google documents Gemini CLI headless mode with `-p` and `--output-format json`.  
-Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の headless mode における `-p` と `--output-format json` を公式ドキュメントで案内しています。
+Anthropic documents `claude -p` and `--output-format`; Google documents Gemini CLI headless mode with `-p` and `--output-format json`.
 
 - Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference
 - Gemini CLI headless mode: https://google-gemini.github.io/gemini-cli/docs/cli/headless.html
 
-## Configuration / 設定
+## Configuration
 
 Minimal example:
 
@@ -110,25 +79,9 @@ Minimal example:
 }
 ```
 
-最小設定例:
-
-```json
-{
-  "telegram_bot_token": "REPLACE_WITH_BOT_TOKEN",
-  "allowed_username": "@your_username",
-  "provider": "codex",
-  "model": "gpt-5.4",
-  "workdir": "/home/your_user",
-  "max_history": 12,
-  "telegram_timeout_seconds": 25,
-  "cli_timeout_seconds": 180
-}
-```
-
 Important keys:
 
-- `provider`: one of `codex`, `claude`, `gemini`
-  The default provider used unless a chat overrides it with `/provider`
+- `provider`: one of `codex`, `claude`, `gemini` — the default provider used unless a chat overrides it with `/provider`
 - `model`: passed through to the selected CLI
 - `workdir`: working directory used when launching the CLI
 - `cli_timeout_seconds`: timeout for the local CLI process
@@ -138,27 +91,7 @@ Important keys:
 - `cli_response_mode`: optional override for how output is read: `output_file`, `stdout`, or `json_stdout`
 - `cli_response_key`: optional JSON key when `cli_response_mode` is `json_stdout`
 
-主なキー:
-
-- `provider`: `codex`、`claude`、`gemini` のいずれか
-  チャットごとの `/provider` 上書きがない場合の既定値です
-- `model`: 選択した CLI にそのまま渡されます
-- `workdir`: CLI 起動時の作業ディレクトリです
-- `cli_timeout_seconds`: ローカル CLI プロセスのタイムアウトです
-- `system_prompt`: 内蔵のシステムプロンプトを差し替える任意設定です
-- `env`: 追加の環境変数を渡す任意オブジェクトです
-- `cli_command_template`: 完全なカスタムコマンドテンプレートを指定する任意設定です
-- `cli_response_mode`: 出力の読み方を上書きする任意設定です。`output_file`、`stdout`、`json_stdout`
-- `cli_response_key`: `json_stdout` 利用時の JSON キーを上書きする任意設定です
-
 Available placeholders inside `cli_command_template`:
-
-- `{prompt}`
-- `{model}`
-- `{workdir}`
-- `{output_path}`
-
-`cli_command_template` で使えるプレースホルダ:
 
 - `{prompt}`
 - `{model}`
@@ -182,37 +115,14 @@ Example custom template:
 }
 ```
 
-カスタムテンプレート例:
+## Setup
 
-```json
-{
-  "provider": "custom-tool",
-  "cli_label": "My Local Agent",
-  "cli_command_template": [
-    "/usr/local/bin/my-agent",
-    "--model",
-    "{model}",
-    "--prompt",
-    "{prompt}"
-  ],
-  "cli_response_mode": "stdout"
-}
-```
-
-## Setup / セットアップ
-
-1. Clone the repository.  
-   リポジトリをクローンします。
-2. Copy the config template.  
-   設定テンプレートをコピーします。
-3. Fill in your bot token and allowed Telegram username.  
-   Bot トークンと許可する Telegram ユーザー名を入力します。
-4. Set `provider`, `model`, and `workdir`.  
-   `provider`、`model`、`workdir` を設定します。
-5. Make sure the selected CLI is installed and authenticated on the same machine.  
-   選んだ CLI が同じマシンにインストールされ、認証済みであることを確認します。
-6. Run once to verify it works.  
-   まず 1 回実行して動作確認します。
+1. Clone the repository.
+2. Copy the config template.
+3. Fill in your bot token and allowed Telegram username.
+4. Set `provider`, `model`, and `workdir`.
+5. Make sure the selected CLI is installed and authenticated on the same machine.
+6. Run once to verify it works.
 
 ```bash
 cp config.example.json config.json
@@ -225,22 +135,13 @@ To run continuously:
 python3 bridge.py
 ```
 
-継続実行する場合:
+## Environment Notes
 
-```bash
-python3 bridge.py
-```
+- A Raspberry Pi is a valid example host, but not a requirement
+- The main intended environment is a Linux machine with Python 3 and your target CLI already installed
+- The same design can work on other user-managed environments if the CLI behaves the same way there
 
-## Environment Notes / 環境メモ
-
-- A Raspberry Pi is a valid example host, but not a requirement  
-  Raspberry Pi は利用例のひとつであり、必須ではありません
-- The main intended environment is a Linux machine with Python 3 and your target CLI already installed  
-  Python 3 と対象 CLI が入っている Linux マシンを主な利用環境として想定しています
-- The same design can work on other user-managed environments if the CLI behaves the same way there  
-  CLI が同様に動作するなら、他の自己管理環境でも同じ構成で利用できます
-
-## Commands / コマンド
+## Commands
 
 - `/start`
 - `/help`
@@ -252,28 +153,19 @@ python3 bridge.py
 - `/provider gemini`
 - `/provider reset`
 
-`/status` shows the current provider for that chat, the default provider, configured command, binary availability, readiness diagnostics, and working directory.  
-`/status` はそのチャットの現在 provider、既定 provider、設定済みコマンド、バイナリの有無、readiness 診断、作業ディレクトリを表示します。
+`/status` shows the current provider for that chat, the default provider, configured command, binary availability, readiness diagnostics, and working directory.
 
-`/provider` without an argument shows the current provider and available choices.  
-引数なしの `/provider` は、現在の provider と利用可能な候補を表示します。
+`/provider` without an argument shows the current provider and available choices.
 
-`/provider codex` or `/provider claude` switches only the current chat, which is useful when one CLI hits rate limits or usage caps.  
-`/provider codex` や `/provider claude` は現在のチャットだけを切り替えるため、ある CLI が利用制限に当たったときの退避先として使えます。
+`/provider codex` or `/provider claude` switches only the current chat, which is useful when one CLI hits rate limits or usage caps.
 
-`/provider reset` returns the chat to the default provider from `config.json`.  
-`/provider reset` は、そのチャットを `config.json` の既定 provider に戻します。
+`/provider reset` returns the chat to the default provider from `config.json`.
 
-When a provider is missing dependencies, Pocketrelay reports that explicitly instead of failing with a vague subprocess error.  
-provider の依存が不足している場合は、曖昧な subprocess エラーではなく、不足内容を明示して返します。
+When a provider is missing dependencies, Pocketrelay reports that explicitly instead of failing with a vague subprocess error.
 
-## systemd User Service / systemd ユーザーサービス
+## systemd User Service
 
-An example service file is included at `systemd/pocketrelay.service`.  
-`systemd/pocketrelay.service` にサービスファイルの例があります。
-
-Update the repository path before enabling the service.  
-サービスを有効化する前に、リポジトリのパスを自分の環境に合わせて更新してください。
+An example service file is included at `systemd/pocketrelay.service`. Update the repository path before enabling the service.
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -282,28 +174,51 @@ systemctl --user daemon-reload
 systemctl --user enable --now pocketrelay.service
 ```
 
-## Limitations / 制限事項
+## Node Version Management (nvm)
 
-- This bridge approximates context by replaying recent chat history into each request  
-  文脈は、最近のチャット履歴を各リクエストに再投入することで近似しています
-- Provider switching is chat-scoped, but model and extra environment variables are still shared globally through `config.json`  
-  provider 切替はチャット単位ですが、model や追加環境変数は依然として `config.json` ベースのグローバル設定です
-- CLI behavior can change over time, so presets may need updates if upstream flags change  
-  CLI の挙動は将来変わりうるため、上流のフラグ変更に応じてプリセット更新が必要になる場合があります
-- Access control is username-based, which is simple but not the strongest option  
-  アクセス制御はユーザー名ベースで、単純ですが最も強固な方法ではありません
-- The project assumes you are running it on a machine you already manage, not as a hardened multi-tenant service  
-  このプロジェクトは、自分で管理しているマシンを前提としており、堅牢化されたマルチテナントサービスではありません
+When using nvm, each Node.js version has its own `bin` directory. `codex` and `claude` must be installed in the version whose path the systemd service uses.
 
-## Files / ファイル構成
+The service file sets PATH explicitly, for example:
 
-- `bridge.py`: main bridge process  
-  メインのブリッジ処理
-- `config.example.json`: configuration template  
-  設定ファイルのテンプレート
-- `systemd/pocketrelay.service`: example user service  
-  `systemd` のユーザーサービス例
-- `state.json`: runtime state file, created locally  
-  実行時にローカル作成される状態ファイル
-- `bridge.log`: runtime log file, created locally  
-  実行時にローカル作成されるログファイル
+```ini
+Environment=PATH=/home/your_user/.nvm/versions/node/v24.15.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+```
+
+If the CLI is missing from that version, the service will fail to find it even if it runs fine in your interactive shell.
+
+**To install both CLIs under the pinned version:**
+
+```bash
+nvm use v24.15.0
+npm install -g @openai/codex
+npm install -g @anthropic-ai/claude-code
+```
+
+**If you switch the default nvm version, reinstall both CLIs for the new version and update the PATH line in the service file.**
+
+```bash
+# Change default version
+nvm alias default v24.15.0
+
+# Update service PATH, then reload
+systemctl --user daemon-reload
+systemctl --user restart pocketrelay.service
+```
+
+To verify which binary the service will actually resolve, run `/status` in Telegram. The `cli_binary_path` and `cli_readiness` fields reflect the PATH the service sees.
+
+## Limitations
+
+- This bridge approximates context by replaying recent chat history into each request
+- Provider switching is chat-scoped, but model and extra environment variables are still shared globally through `config.json`
+- CLI behavior can change over time, so presets may need updates if upstream flags change
+- Access control is username-based, which is simple but not the strongest option
+- The project assumes you are running it on a machine you already manage, not as a hardened multi-tenant service
+
+## Files
+
+- `bridge.py`: main bridge process
+- `config.example.json`: configuration template
+- `systemd/pocketrelay.service`: example user service
+- `state.json`: runtime state file, created locally
+- `bridge.log`: runtime log file, created locally
