@@ -1,12 +1,12 @@
 [Unit]
-Description=Telegram AI CLI Bridge
+Description=Pocketrelay
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /home/longtail1019/telecodex/bridge.py
-WorkingDirectory=/home/longtail1019/telecodex
+ExecStart=/usr/bin/python3 /path/to/pocketrelay/bridge.py
+WorkingDirectory=/path/to/pocketrelay
 Restart=always
 RestartSec=5
 

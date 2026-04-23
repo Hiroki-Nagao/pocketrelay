@@ -1,10 +1,33 @@
-# telecodex
+# Pocketrelay
 
 English comes first in this README, and each section is followed by Japanese.  
 この README は英語が先にあり、各セクションのあとに日本語が続きます。
 
-Telegram Bot messages routed into a local AI coding CLI such as Codex CLI, Claude Code, or Gemini CLI.  
-Telegram Bot のメッセージを、Codex CLI、Claude Code、Gemini CLI などのローカル AI コーディング CLI に渡すためのブリッジです。
+Pocketrelay is a lightweight bridge for doing development work from your phone through local AI coding CLIs such as Codex CLI, Claude Code, and Gemini CLI.  
+Pocketrelay は、Codex CLI、Claude Code、Gemini CLI などのローカル AI コーディング CLI を、スマホ経由で使って開発作業を進めるための軽量ブリッジです。
+
+## What Pocketrelay Means / 名前の意味
+
+`Pocketrelay` means "relay my local development environment to my pocket." The project is about being away from your desk, opening Telegram on your phone, and still using the machine and CLI setup you already trust.  
+`Pocketrelay` は「自分のローカル開発環境をポケットまで中継する」という意味です。席を離れていても、スマホで Telegram を開けば、すでに信頼している自分のマシンと CLI 環境をそのまま使える、という発想です。
+
+## Why It Exists / 何がうれしいか
+
+Pocketrelay is not just another wrapper around an API. Its value is that it reuses your existing local setup instead of asking you to rebuild your workflow around a hosted service.  
+Pocketrelay は単なる API ラッパーではありません。価値は、ホストされた別サービスに合わせてワークフローを作り直すのではなく、すでにあるローカル環境をそのまま再利用できることにあります。
+
+Why that matters:
+
+- Use the CLI login state you already have on your machine  
+  すでにマシン上にある CLI のログイン状態をそのまま使える
+- Reuse the exact local tools, repos, shell environment, and files you already work with  
+  いつも使っているローカルのツール、リポジトリ、shell 環境、ファイルをそのまま再利用できる
+- Send a prompt from your phone during a break instead of sitting at your desk  
+  机に向かわなくても、休憩中にスマホからプロンプトを投げられる
+- Avoid standing up a separate API service layer just to reach your own machine  
+  自分のマシンに到達するためだけに、別の API サービス層を立てなくてよい
+- Swap between Codex, Claude, Gemini, or a custom CLI behind the same Telegram entry point  
+  同じ Telegram の入口の裏側で、Codex、Claude、Gemini、独自 CLI を差し替えられる
 
 ## What It Does / 何をするものか
 
@@ -23,16 +46,16 @@ Telegram Bot のメッセージを、Codex CLI、Claude Code、Gemini CLI など
 
 ## How It Works / 仕組み
 
-`telecodex` does not call OpenAI, Anthropic, or Google APIs directly. It reuses the login state and local behavior of a CLI already installed on the machine, then shells out to that CLI for each Telegram message.  
-`telecodex` 自体は OpenAI、Anthropic、Google の API を直接呼びません。代わりに、そのマシンにすでに入っている CLI のログイン状態とローカル動作を再利用し、Telegram メッセージごとにその CLI を外部実行します。
+Pocketrelay does not call OpenAI, Anthropic, or Google APIs directly. It reuses the login state and local behavior of a CLI already installed on the machine, then shells out to that CLI for each Telegram message.  
+Pocketrelay 自体は OpenAI、Anthropic、Google の API を直接呼びません。代わりに、そのマシンにすでに入っている CLI のログイン状態とローカル動作を再利用し、Telegram メッセージごとにその CLI を外部実行します。
 
 ```mermaid
 flowchart LR
     U[Telegram User] --> B[Telegram Bot]
-    B --> T[telecodex bridge.py]
-    T --> C[Local AI CLI]
-    C --> T
-    T --> B
+    B --> P[Pocketrelay bridge.py]
+    P --> C[Local AI CLI]
+    C --> P
+    P --> B
     B --> U
 ```
 
@@ -208,14 +231,17 @@ python3 bridge.py
 
 ## systemd User Service / systemd ユーザーサービス
 
-An example service file is included at `systemd/telegram-ai-cli-bridge.service`.  
-`systemd/telegram-ai-cli-bridge.service` にサービスファイルの例があります。
+An example service file is included at `systemd/pocketrelay.service`.  
+`systemd/pocketrelay.service` にサービスファイルの例があります。
+
+Update the repository path before enabling the service.  
+サービスを有効化する前に、リポジトリパスを自分の環境に合わせて更新してください。
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp systemd/telegram-ai-cli-bridge.service ~/.config/systemd/user/
+cp systemd/pocketrelay.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now telegram-ai-cli-bridge.service
+systemctl --user enable --now pocketrelay.service
 ```
 
 ## Limitations / 制限事項
@@ -233,7 +259,7 @@ systemctl --user enable --now telegram-ai-cli-bridge.service
   メインのブリッジ処理
 - `config.example.json`: configuration template  
   設定ファイルのテンプレート
-- `systemd/telegram-ai-cli-bridge.service`: example user service  
+- `systemd/pocketrelay.service`: example user service  
   `systemd` のユーザーサービス例
 - `state.json`: runtime state file, created locally  
   実行時にローカル作成される状態ファイル

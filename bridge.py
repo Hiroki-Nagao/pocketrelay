@@ -17,7 +17,7 @@ CONFIG_PATH = BASE_DIR / "config.json"
 STATE_PATH = BASE_DIR / "state.json"
 LOG_PATH = BASE_DIR / "bridge.log"
 
-DEFAULT_SYSTEM_PROMPT = """You are a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.
+DEFAULT_SYSTEM_PROMPT = """You are a pragmatic coding assistant running through Pocketrelay on a Raspberry Pi.
 Keep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,
 GitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.
 If you are unsure, state uncertainty directly."""
@@ -93,7 +93,7 @@ def log_line(message: str) -> None:
 
 def http_json(url: str, payload=None, headers=None, timeout=60):
     body = None
-    request_headers = {"User-Agent": "telegram-cli-bridge/1.0"}
+    request_headers = {"User-Agent": "pocketrelay/1.0"}
     if headers:
         request_headers.update(headers)
     if payload is not None:
@@ -114,7 +114,7 @@ def normalize_command_template(value):
     raise ValueError("cli_command_template must be a string or a list of strings")
 
 
-class TelegramCliBridge:
+class PocketRelayBridge:
     def __init__(self, config):
         self.config = config
         self.state = load_json(STATE_PATH, {"last_update_id": 0, "conversations": {}})
@@ -357,7 +357,7 @@ def main():
     config = load_json(CONFIG_PATH, None)
     if not config:
         raise SystemExit(f"Missing config file: {CONFIG_PATH}")
-    bridge = TelegramCliBridge(config)
+    bridge = PocketRelayBridge(config)
     if args.once:
         bridge.run_once()
     else:
