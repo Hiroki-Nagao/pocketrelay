@@ -3,31 +3,34 @@
 English comes first in this README, and each section is followed by Japanese.  
 この README は英語が先にあり、各セクションのあとに日本語が続きます。
 
-Pocketrelay is a lightweight bridge for doing development work from your phone through local AI coding CLIs such as Codex CLI, Claude Code, and Gemini CLI.  
-Pocketrelay は、Codex CLI、Claude Code、Gemini CLI などのローカル AI コーディング CLI を、スマホ経由で使って開発作業を進めるための軽量ブリッジです。
+Pocketrelay is a lightweight way to work through local AI coding CLIs such as Codex CLI, Claude Code, and Gemini CLI from your phone.  
+Pocketrelay は、Codex CLI、Claude Code、Gemini CLI などのローカル AI コーディング CLI を、スマホ経由で利用しながら開発を進めるための軽量ブリッジです。
+
+It is not specific to Raspberry Pi. A Raspberry Pi is just one example of a small always-on host; Pocketrelay is meant for any user-managed machine where your CLI tools, repositories, and auth state already live.  
+Raspberry Pi 専用ではありません。Raspberry Pi は常時起動しておく小型ホストの一例にすぎず、Pocketrelay は CLI ツール、リポジトリ、認証状態がすでに揃っている任意の自己管理マシンで使うことを想定しています。
 
 ## What Pocketrelay Means / 名前の意味
 
-`Pocketrelay` means "relay my local development environment to my pocket." The project is about being away from your desk, opening Telegram on your phone, and still using the machine and CLI setup you already trust.  
-`Pocketrelay` は「自分のローカル開発環境をポケットまで中継する」という意味です。席を離れていても、スマホで Telegram を開けば、すでに信頼している自分のマシンと CLI 環境をそのまま使える、という発想です。
+`Pocketrelay` means "relay my local development environment to my pocket." The idea is simple: even when you are away from your desk, you can open Telegram on your phone and keep using the machine and CLI setup you already trust.  
+`Pocketrelay` は「自分のローカル開発環境をポケットまで中継する」という意味です。席を離れていても、スマホで Telegram を開けば、使い慣れた自分のマシンと CLI 環境をそのまま使える、という考え方に基づいています。
 
 ## Why It Exists / 何がうれしいか
 
-Pocketrelay is not just another wrapper around an API. Its value is that it reuses your existing local setup instead of asking you to rebuild your workflow around a hosted service.  
-Pocketrelay は単なる API ラッパーではありません。価値は、ホストされた別サービスに合わせてワークフローを作り直すのではなく、すでにあるローカル環境をそのまま再利用できることにあります。
+Pocketrelay is not just another API wrapper. Its value is that it reuses your existing local setup instead of asking you to rebuild your workflow around a hosted service.  
+Pocketrelay は単なる API ラッパーではありません。ホストされた別サービスに合わせてワークフローを組み直すのではなく、手元のローカル環境をそのまま活かせる点に価値があります。
 
-Why that matters:
+Why that helps:
 
-- Use the CLI login state you already have on your machine  
+- Reuse the CLI login state you already have on your machine  
   すでにマシン上にある CLI のログイン状態をそのまま使える
-- Reuse the exact local tools, repos, shell environment, and files you already work with  
-  いつも使っているローカルのツール、リポジトリ、shell 環境、ファイルをそのまま再利用できる
+- Keep using the same local tools, repos, shell environment, and files you already work with  
+  いつも使っているローカルのツール、リポジトリ、shell 環境、ファイルをそのまま活用できる
 - Send a prompt from your phone during a break instead of sitting at your desk  
   机に向かわなくても、休憩中にスマホからプロンプトを投げられる
-- Avoid standing up a separate API service layer just to reach your own machine  
+- Avoid standing up a separate API service just to reach your own machine  
   自分のマシンに到達するためだけに、別の API サービス層を立てなくてよい
-- Swap between Codex, Claude, Gemini, or a custom CLI behind the same Telegram entry point  
-  同じ Telegram の入口の裏側で、Codex、Claude、Gemini、独自 CLI を差し替えられる
+- Switch between Codex, Claude, Gemini, or a custom CLI behind the same Telegram entry point  
+  同じ Telegram の窓口の裏側で、Codex、Claude、Gemini、独自 CLI を切り替えられる
 
 ## What It Does / 何をするものか
 
@@ -40,14 +43,14 @@ Why that matters:
 - Supports built-in presets for `codex`, `claude`, and `gemini`  
   `codex`、`claude`、`gemini` の組み込みプリセットがあります
 - Allows a fully custom command template when presets are not enough  
-  プリセットで足りない場合は完全なカスタムコマンドテンプレートも使えます
+  プリセットで足りない場合は、完全なカスタムコマンドテンプレートも使えます
 - Stores a short local conversation history per chat  
   チャットごとに短い会話履歴をローカル保存します
 
 ## How It Works / 仕組み
 
-Pocketrelay does not call OpenAI, Anthropic, or Google APIs directly. It reuses the login state and local behavior of a CLI already installed on the machine, then shells out to that CLI for each Telegram message.  
-Pocketrelay 自体は OpenAI、Anthropic、Google の API を直接呼びません。代わりに、そのマシンにすでに入っている CLI のログイン状態とローカル動作を再利用し、Telegram メッセージごとにその CLI を外部実行します。
+Pocketrelay does not call OpenAI, Anthropic, or Google APIs directly. Instead, it reuses the login state and local behavior of a CLI that is already installed on your machine, then invokes that CLI for each Telegram message.  
+Pocketrelay 自体は OpenAI、Anthropic、Google の API を直接呼びません。代わりに、そのマシンに入っている CLI のログイン状態とローカルでの動作を再利用し、Telegram のメッセージごとに CLI を呼び出します。
 
 ```mermaid
 flowchart LR
@@ -130,10 +133,10 @@ Important keys:
 主なキー:
 
 - `provider`: `codex`、`claude`、`gemini` のいずれか
-- `model`: 選択した CLI にそのまま渡します
+- `model`: 選択した CLI にそのまま渡されます
 - `workdir`: CLI 起動時の作業ディレクトリです
 - `cli_timeout_seconds`: ローカル CLI プロセスのタイムアウトです
-- `system_prompt`: 内蔵システムプロンプトを差し替える任意設定です
+- `system_prompt`: 内蔵のシステムプロンプトを差し替える任意設定です
 - `env`: 追加の環境変数を渡す任意オブジェクトです
 - `cli_command_template`: 完全なカスタムコマンドテンプレートを指定する任意設定です
 - `cli_response_mode`: 出力の読み方を上書きする任意設定です。`output_file`、`stdout`、`json_stdout`
@@ -219,6 +222,15 @@ python3 bridge.py
 python3 bridge.py
 ```
 
+## Environment Notes / 環境メモ
+
+- A Raspberry Pi is a valid example host, but not a requirement  
+  Raspberry Pi は利用例のひとつであり、必須ではありません
+- The main intended environment is a Linux machine with Python 3 and your target CLI already installed  
+  Python 3 と対象 CLI が入っている Linux マシンを主な利用環境として想定しています
+- The same design can work on other user-managed environments if the CLI behaves the same way there  
+  CLI が同様に動作するなら、他の自己管理環境でも同じ構成で利用できます
+
 ## Commands / コマンド
 
 - `/start`
@@ -235,7 +247,7 @@ An example service file is included at `systemd/pocketrelay.service`.
 `systemd/pocketrelay.service` にサービスファイルの例があります。
 
 Update the repository path before enabling the service.  
-サービスを有効化する前に、リポジトリパスを自分の環境に合わせて更新してください。
+サービスを有効化する前に、リポジトリのパスを自分の環境に合わせて更新してください。
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -246,12 +258,14 @@ systemctl --user enable --now pocketrelay.service
 
 ## Limitations / 制限事項
 
-- This bridge still approximates context by replaying recent chat history into each request  
-  文脈は引き続き、最近のチャット履歴を各リクエストに再投入することで近似しています
+- This bridge approximates context by replaying recent chat history into each request  
+  文脈は、最近のチャット履歴を各リクエストに再投入することで近似しています
 - CLI behavior can change over time, so presets may need updates if upstream flags change  
   CLI の挙動は将来変わりうるため、上流のフラグ変更に応じてプリセット更新が必要になる場合があります
 - Access control is username-based, which is simple but not the strongest option  
   アクセス制御はユーザー名ベースで、単純ですが最も強固な方法ではありません
+- The project assumes you are running it on a machine you already manage, not as a hardened multi-tenant service  
+  このプロジェクトは、自分で管理しているマシンを前提としており、堅牢化されたマルチテナントサービスではありません
 
 ## Files / ファイル構成
 
