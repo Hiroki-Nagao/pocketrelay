@@ -3,11 +3,8 @@
 English comes first in this README, and each section is followed by Japanese.  
 この README は英語が先にあり、各セクションのあとに日本語が続きます。
 
-Telegram Bot messages routed into a local `codex exec` session.  
-Telegram Bot のメッセージを、ローカルの `codex exec` セッションに渡すためのブリッジです。
-
-This project is a small bridge for people who already use Codex CLI on a machine and want to send prompts from Telegram without wiring up the OpenAI API directly. The bot polls Telegram updates, forwards allowed messages into local Codex CLI, and sends the final answer back to Telegram.  
-このプロジェクトは、すでにマシン上で Codex CLI を使っていて、OpenAI API を直接つながずに Telegram からプロンプトを送りたい人向けの小さなブリッジです。Bot は Telegram の更新をポーリングし、許可されたメッセージをローカルの Codex CLI に転送し、最終回答を Telegram に返します。
+Telegram Bot messages routed into a local AI coding CLI such as Codex CLI, Claude Code, or Gemini CLI.  
+Telegram Bot のメッセージを、Codex CLI、Claude Code、Gemini CLI などのローカル AI コーディング CLI に渡すためのブリッジです。
 
 ## What It Does / 何をするものか
 
@@ -15,112 +12,157 @@ This project is a small bridge for people who already use Codex CLI on a machine
   Telegram のメッセージを Bot 経由で受け取ります
 - Restricts access to one allowed Telegram username  
   許可した 1 つの Telegram ユーザー名だけにアクセスを制限します
-- Invokes local `codex exec` for each request  
-  各リクエストごとにローカルの `codex exec` を実行します
-- Sends the final Codex reply back to Telegram  
-  Codex の最終返信を Telegram に返します
+- Invokes a local AI CLI for each request  
+  各リクエストごとにローカルの AI CLI を実行します
+- Supports built-in presets for `codex`, `claude`, and `gemini`  
+  `codex`、`claude`、`gemini` の組み込みプリセットがあります
+- Allows a fully custom command template when presets are not enough  
+  プリセットで足りない場合は完全なカスタムコマンドテンプレートも使えます
 - Stores a short local conversation history per chat  
   チャットごとに短い会話履歴をローカル保存します
 
 ## How It Works / 仕組み
 
-`telecodex` does not call the OpenAI API itself. Instead, it reuses the machine's existing Codex CLI login state and shells out to `codex exec`.  
-`telecodex` 自体は OpenAI API を直接呼びません。代わりに、そのマシンにある既存の Codex CLI のログイン状態を再利用し、`codex exec` を外部実行します。
+`telecodex` does not call OpenAI, Anthropic, or Google APIs directly. It reuses the login state and local behavior of a CLI already installed on the machine, then shells out to that CLI for each Telegram message.  
+`telecodex` 自体は OpenAI、Anthropic、Google の API を直接呼びません。代わりに、そのマシンにすでに入っている CLI のログイン状態とローカル動作を再利用し、Telegram メッセージごとにその CLI を外部実行します。
 
 ```mermaid
 flowchart LR
     U[Telegram User] --> B[Telegram Bot]
     B --> T[telecodex bridge.py]
-    T --> C[Local codex exec]
+    T --> C[Local AI CLI]
     C --> T
     T --> B
     B --> U
 ```
 
-Current request flow:  
-現在のリクエスト処理の流れ:
+## Supported Providers / 対応プロバイダ
 
-1. Telegram user sends a message to the bot  
-   Telegram ユーザーが Bot にメッセージを送る
-2. `bridge.py` fetches the update with long polling  
-   `bridge.py` がロングポーリングで更新を取得する
-3. The message is turned into a prompt with recent chat context  
-   メッセージが最近のチャット文脈つきのプロンプトに変換される
-4. Local Codex CLI runs once and writes its final reply to a temp file  
-   ローカルの Codex CLI が 1 回実行され、最終返信を一時ファイルに書き出す
-5. The reply is posted back to Telegram  
-   返信が Telegram に投稿される
+- `codex`  
+  Runs `codex exec ...` and reads the final answer from the output file.
+- `claude`  
+  Runs `claude -p ...` and reads the answer from stdout.
+- `gemini`  
+  Runs `gemini -p ... --output-format json` and reads the `response` field.
 
-## Why Use This Design / この設計が向くケース
+`codex`  
+`codex exec ...` を実行し、出力ファイルから最終返答を読みます。
 
-`telecodex` is built around `Telegram -> local bridge -> Codex CLI`. It is most useful when you want Telegram as a thin remote control for a machine that already has Codex CLI configured.  
-`telecodex` は `Telegram -> ローカルブリッジ -> Codex CLI` を前提にしています。すでに Codex CLI を設定済みのマシンを、Telegram から薄い操作窓口として使いたい場合に最も向いています。
+`claude`  
+`claude -p ...` を実行し、stdout から返答を読みます。
 
-Why it can be a good fit:  
-向いている理由:
+`gemini`  
+`gemini -p ... --output-format json` を実行し、`response` フィールドを読みます。
 
-- Reuses an existing local CLI workflow instead of requiring a separate API service  
-  別の API サービスを立てず、既存のローカル CLI ワークフローをそのまま使える
-- Keeps the implementation small for single-user or tightly controlled setups  
-  単独利用や厳しく制御した運用では、実装を小さく保ちやすい
-- Makes it straightforward to connect Telegram with local tools such as shell commands, files, git, and `systemd`  
-  shell コマンド、ファイル、git、`systemd` などのローカル操作と Telegram をつなぎやすい
+Anthropic documents `claude -p` and `--output-format`; Google documents Gemini CLI headless mode with `-p` and `--output-format json`.  
+Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の headless mode における `-p` と `--output-format json` を公式ドキュメントで案内しています。
 
-Tradeoffs to understand:  
-理解しておくべき注意点:
+- Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference
+- Gemini CLI headless mode: https://google-gemini.github.io/gemini-cli/docs/cli/headless.html
 
-- You operate the bridge process yourself, including uptime and failure recovery  
-  稼働維持や障害復旧を含め、ブリッジプロセスの運用は自分で見る必要がある
-- Logging, retries, timeouts, and operational safeguards are your responsibility  
-  ログ、再試行、タイムアウト、運用上の安全策は自前で整える必要がある
-- Permission boundaries are looser than in a dedicated multi-user API design  
-  専用の複数ユーザー向け API 設計に比べると、権限境界は緩くなりやすい
-- If the bot can trigger local actions, mistakes can affect the machine directly  
-  Bot からローカル操作を起こせる以上、ミスがそのままマシンに影響しうる
+## Configuration / 設定
 
-Typical use cases:  
-典型的な用途:
+Minimal example:
 
-- Personal automation  
-  個人用自動化
-- Remote access to a development machine you already manage  
-  すでに自分で管理している開発マシンへのリモート操作
-- Lightweight operational helpers rather than a public-facing service  
-  公開サービスではなく、軽量な運用補助
+```json
+{
+  "telegram_bot_token": "REPLACE_WITH_BOT_TOKEN",
+  "allowed_username": "@your_username",
+  "provider": "codex",
+  "model": "gpt-5.4",
+  "workdir": "/home/your_user",
+  "max_history": 12,
+  "telegram_timeout_seconds": 25,
+  "cli_timeout_seconds": 180
+}
+```
 
-## Requirements / 必要なもの
+最小設定例:
 
-- Linux machine with Python 3  
-  Python 3 が入った Linux マシン
-- Telegram bot token from `@BotFather`  
-  `@BotFather` で取得した Telegram Bot トークン
-- Codex CLI already installed and logged in on the same machine  
-  同じマシン上で、すでにインストールとログインが済んでいる Codex CLI
-- Network access for Telegram polling  
-  Telegram のポーリングに必要なネットワーク接続
+```json
+{
+  "telegram_bot_token": "REPLACE_WITH_BOT_TOKEN",
+  "allowed_username": "@your_username",
+  "provider": "codex",
+  "model": "gpt-5.4",
+  "workdir": "/home/your_user",
+  "max_history": 12,
+  "telegram_timeout_seconds": 25,
+  "cli_timeout_seconds": 180
+}
+```
 
-Important:  
-重要:
+Important keys:
 
-- This repository currently assumes a local Codex CLI installed under the author's NVM path inside `bridge.py`  
-  現在のリポジトリは、`bridge.py` の中で作者の NVM 配下にある Codex CLI を前提にしています
-- You will likely need to adjust the `CODEX_NODE` and `CODEX_JS` paths for your own machine  
-  多くの場合、自分の環境に合わせて `CODEX_NODE` と `CODEX_JS` のパスを調整する必要があります
-- This is a pragmatic personal bridge, not a polished portable package yet  
-  これは実用優先の個人用ブリッジであり、まだ洗練されたポータブルなパッケージではありません
+- `provider`: one of `codex`, `claude`, `gemini`
+- `model`: passed through to the selected CLI
+- `workdir`: working directory used when launching the CLI
+- `cli_timeout_seconds`: timeout for the local CLI process
+- `system_prompt`: optional replacement for the built-in system prompt
+- `env`: optional object of extra environment variables
+- `cli_command_template`: optional string or string array for a fully custom command template
+- `cli_response_mode`: optional override for how output is read: `output_file`, `stdout`, or `json_stdout`
+- `cli_response_key`: optional JSON key when `cli_response_mode` is `json_stdout`
 
-## Files / ファイル構成
+主なキー:
 
-- `bridge.py`: main bridge process  
-  メインのブリッジ処理
-- `config.example.json`: configuration template  
-  設定ファイルのテンプレート
-- `systemd/telegram-codex-bridge.service`: example user service  
-  `systemd` のユーザーサービス例
-- `state.json`: runtime state file, created locally  
-  実行時にローカル作成される状態ファイル
-- `bridge.log`: runtime log file, created locally  
-  実行時にローカル作成されるログファイル
+- `provider`: `codex`、`claude`、`gemini` のいずれか
+- `model`: 選択した CLI にそのまま渡します
+- `workdir`: CLI 起動時の作業ディレクトリです
+- `cli_timeout_seconds`: ローカル CLI プロセスのタイムアウトです
+- `system_prompt`: 内蔵システムプロンプトを差し替える任意設定です
+- `env`: 追加の環境変数を渡す任意オブジェクトです
+- `cli_command_template`: 完全なカスタムコマンドテンプレートを指定する任意設定です
+- `cli_response_mode`: 出力の読み方を上書きする任意設定です。`output_file`、`stdout`、`json_stdout`
+- `cli_response_key`: `json_stdout` 利用時の JSON キーを上書きする任意設定です
+
+Available placeholders inside `cli_command_template`:
+
+- `{prompt}`
+- `{model}`
+- `{workdir}`
+- `{output_path}`
+
+`cli_command_template` で使えるプレースホルダ:
+
+- `{prompt}`
+- `{model}`
+- `{workdir}`
+- `{output_path}`
+
+Example custom template:
+
+```json
+{
+  "provider": "custom-tool",
+  "cli_label": "My Local Agent",
+  "cli_command_template": [
+    "/usr/local/bin/my-agent",
+    "--model",
+    "{model}",
+    "--prompt",
+    "{prompt}"
+  ],
+  "cli_response_mode": "stdout"
+}
+```
+
+カスタムテンプレート例:
+
+```json
+{
+  "provider": "custom-tool",
+  "cli_label": "My Local Agent",
+  "cli_command_template": [
+    "/usr/local/bin/my-agent",
+    "--model",
+    "{model}",
+    "--prompt",
+    "{prompt}"
+  ],
+  "cli_response_mode": "stdout"
+}
+```
 
 ## Setup / セットアップ
 
@@ -130,9 +172,11 @@ Important:
    設定テンプレートをコピーします。
 3. Fill in your bot token and allowed Telegram username.  
    Bot トークンと許可する Telegram ユーザー名を入力します。
-4. Adjust the hardcoded Codex CLI paths in `bridge.py` if needed.  
-   必要なら `bridge.py` 内のハードコードされた Codex CLI のパスを調整します。
-5. Run the bridge once to verify it works.  
+4. Set `provider`, `model`, and `workdir`.  
+   `provider`、`model`、`workdir` を設定します。
+5. Make sure the selected CLI is installed and authenticated on the same machine.  
+   選んだ CLI が同じマシンにインストールされ、認証済みであることを確認します。
+6. Run once to verify it works.  
    まず 1 回実行して動作確認します。
 
 ```bash
@@ -140,85 +184,58 @@ cp config.example.json config.json
 python3 bridge.py --once
 ```
 
-To run continuously:  
+To run continuously:
+
+```bash
+python3 bridge.py
+```
+
 継続実行する場合:
 
 ```bash
 python3 bridge.py
 ```
 
+## Commands / コマンド
+
+- `/start`
+- `/help`
+- `/reset`
+- `/status`
+
+`/status` shows the selected provider, configured command, binary availability, and working directory.  
+`/status` は選択中の provider、設定済みコマンド、バイナリの有無、作業ディレクトリを表示します。
+
 ## systemd User Service / systemd ユーザーサービス
 
-An example service file is included at `systemd/telegram-codex-bridge.service`.  
-`systemd/telegram-codex-bridge.service` にサービスファイルの例があります。
-
-Before using it:  
-使う前に次を更新してください:
-
-- update the repository path in `ExecStart`  
-  `ExecStart` 内のリポジトリパス
-- update the repository path in `WorkingDirectory`  
-  `WorkingDirectory` 内のリポジトリパス
-
-Then install and start it:  
-その後、インストールして起動します:
+An example service file is included at `systemd/telegram-ai-cli-bridge.service`.  
+`systemd/telegram-ai-cli-bridge.service` にサービスファイルの例があります。
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp systemd/telegram-codex-bridge.service ~/.config/systemd/user/
+cp systemd/telegram-ai-cli-bridge.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now telegram-codex-bridge.service
+systemctl --user enable --now telegram-ai-cli-bridge.service
 ```
-
-## Configuration / 設定
-
-Example `config.json`:  
-`config.json` の例:
-
-```json
-{
-  "telegram_bot_token": "REPLACE_WITH_BOT_TOKEN",
-  "allowed_username": "@your_username",
-  "model": "gpt-5.4",
-  "max_history": 12,
-  "telegram_timeout_seconds": 25,
-  "codex_timeout_seconds": 180
-}
-```
-
-## Security Notes / セキュリティ注意点
-
-- Do not commit `config.json`  
-  `config.json` はコミットしないでください
-- Do not commit your bot token  
-  Bot トークンはコミットしないでください
-- Anyone with your bot token can control your bot  
-  Bot トークンを持つ人は誰でもその Bot を操作できます
-- This bridge intentionally trusts the local Codex login state on the machine  
-  このブリッジは、そのマシン上のローカル Codex ログイン状態を信頼する前提です
 
 ## Limitations / 制限事項
 
-- The current implementation uses `codex exec --ephemeral`, so it is not a true persistent Codex session  
-  現在の実装は `codex exec --ephemeral` を使っているため、本当の永続セッションではありません
-- Context is approximated by replaying recent chat history into each prompt  
-  文脈は、最近のチャット履歴を各プロンプトに再投入することで近似しています
-- Telegram access control is username-based, which is simple but not the strongest option  
-  Telegram のアクセス制御はユーザー名ベースで、単純ですが最も強固な方法ではありません
-- Codex CLI path discovery is not automatic yet  
-  Codex CLI のパス検出はまだ自動化されていません
-- CLI behavior may break if future Codex versions change `exec` behavior  
-  将来の Codex バージョンで `exec` の挙動が変わると動かなくなる可能性があります
+- This bridge still approximates context by replaying recent chat history into each request  
+  文脈は引き続き、最近のチャット履歴を各リクエストに再投入することで近似しています
+- CLI behavior can change over time, so presets may need updates if upstream flags change  
+  CLI の挙動は将来変わりうるため、上流のフラグ変更に応じてプリセット更新が必要になる場合があります
+- Access control is username-based, which is simple but not the strongest option  
+  アクセス制御はユーザー名ベースで、単純ですが最も強固な方法ではありません
 
-## Future Improvements / 今後の改善案
+## Files / ファイル構成
 
-- Resume real Codex sessions instead of replaying history  
-  履歴の再投入ではなく、本物の Codex セッション再開に対応する
-- Move secrets to environment files instead of `config.json`  
-  秘密情報を `config.json` ではなく環境ファイルに移す
-- Support `from.id` or `chat_id` allowlists  
-  `from.id` や `chat_id` ベースの許可リストに対応する
-- Auto-detect Codex CLI path  
-  Codex CLI のパスを自動検出する
-- Add command routing such as `/ask`, `/reset`, and `/status`  
-  `/ask`、`/reset`、`/status` のようなコマンドルーティングを追加する
+- `bridge.py`: main bridge process  
+  メインのブリッジ処理
+- `config.example.json`: configuration template  
+  設定ファイルのテンプレート
+- `systemd/telegram-ai-cli-bridge.service`: example user service  
+  `systemd` のユーザーサービス例
+- `state.json`: runtime state file, created locally  
+  実行時にローカル作成される状態ファイル
+- `bridge.log`: runtime log file, created locally  
+  実行時にローカル作成されるログファイル

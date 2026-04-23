@@ -2,8 +2,9 @@
 import argparse
 import json
 import os
+import shlex
+import shutil
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.parse
@@ -15,15 +16,58 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 STATE_PATH = BASE_DIR / "state.json"
 LOG_PATH = BASE_DIR / "bridge.log"
-AUTH_PATH = Path.home() / ".codex" / "auth.json"
-CODEX_NODE = Path.home() / ".nvm" / "versions" / "node" / "v24.15.0" / "bin" / "node"
-CODEX_JS = Path.home() / ".nvm" / "versions" / "node" / "v24.15.0" / "lib" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
 
-
-SYSTEM_PROMPT = """You are Codex, a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.
+DEFAULT_SYSTEM_PROMPT = """You are a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.
 Keep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,
 GitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.
 If you are unsure, state uncertainty directly."""
+
+CLI_PRESETS = {
+    "codex": {
+        "label": "Codex CLI",
+        "command": [
+            "codex",
+            "exec",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "-C",
+            "{workdir}",
+            "-m",
+            "{model}",
+            "-o",
+            "{output_path}",
+            "{prompt}",
+        ],
+        "response_mode": "output_file",
+    },
+    "claude": {
+        "label": "Claude Code",
+        "command": [
+            "claude",
+            "-p",
+            "--output-format",
+            "text",
+            "--model",
+            "{model}",
+            "{prompt}",
+        ],
+        "response_mode": "stdout",
+    },
+    "gemini": {
+        "label": "Gemini CLI",
+        "command": [
+            "gemini",
+            "-p",
+            "{prompt}",
+            "--model",
+            "{model}",
+            "--output-format",
+            "json",
+        ],
+        "response_mode": "json_stdout",
+        "response_key": "response",
+    },
+}
 
 
 def load_json(path: Path, default):
@@ -49,7 +93,7 @@ def log_line(message: str) -> None:
 
 def http_json(url: str, payload=None, headers=None, timeout=60):
     body = None
-    request_headers = {"User-Agent": "telegram-codex-bridge/1.0"}
+    request_headers = {"User-Agent": "telegram-cli-bridge/1.0"}
     if headers:
         request_headers.update(headers)
     if payload is not None:
@@ -60,16 +104,68 @@ def http_json(url: str, payload=None, headers=None, timeout=60):
         return json.loads(resp.read().decode("utf-8"))
 
 
-class TelegramCodexBridge:
+def normalize_command_template(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return shlex.split(value)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return value
+    raise ValueError("cli_command_template must be a string or a list of strings")
+
+
+class TelegramCliBridge:
     def __init__(self, config):
         self.config = config
         self.state = load_json(STATE_PATH, {"last_update_id": 0, "conversations": {}})
         self.bot_token = config["telegram_bot_token"]
         self.allowed_username = config["allowed_username"].lstrip("@").lower()
+        self.provider = config.get("provider", "codex").lower()
         self.model = config.get("model", "gpt-5.4")
         self.max_history = int(config.get("max_history", 12))
-        self.codex_timeout = int(config.get("codex_timeout_seconds", 180))
+        self.cli_timeout = int(
+            config.get(
+                "cli_timeout_seconds",
+                config.get("codex_timeout_seconds", 180),
+            )
+        )
         self.telegram_base = f"https://api.telegram.org/bot{self.bot_token}"
+        self.workdir = str(Path(config.get("workdir", str(Path.home()))).expanduser())
+        self.system_prompt = config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+        self.cli_command_template = self.resolve_command_template()
+
+    def resolve_command_template(self):
+        custom_template = normalize_command_template(self.config.get("cli_command_template"))
+        if custom_template:
+            return custom_template
+        preset = CLI_PRESETS.get(self.provider)
+        if preset:
+            return list(preset["command"])
+        raise ValueError(f"Unsupported provider: {self.provider}")
+
+    def provider_label(self) -> str:
+        if self.config.get("cli_label"):
+            return str(self.config["cli_label"])
+        preset = CLI_PRESETS.get(self.provider)
+        if preset:
+            return preset["label"]
+        return self.provider
+
+    def cli_response_mode(self) -> str:
+        if self.config.get("cli_response_mode"):
+            return str(self.config["cli_response_mode"])
+        preset = CLI_PRESETS.get(self.provider)
+        if preset:
+            return preset["response_mode"]
+        return "stdout"
+
+    def cli_response_key(self) -> str:
+        if self.config.get("cli_response_key"):
+            return str(self.config["cli_response_key"])
+        preset = CLI_PRESETS.get(self.provider)
+        if preset:
+            return preset.get("response_key", "response")
+        return "response"
 
     def save_state(self):
         save_json(STATE_PATH, self.state)
@@ -99,7 +195,7 @@ class TelegramCodexBridge:
 
     def build_prompt(self, prompt: str, chat_id: int) -> str:
         history = self.chat_history(chat_id)
-        lines = [SYSTEM_PROMPT, "", "Conversation so far:"]
+        lines = [self.system_prompt, "", "Conversation so far:"]
         for item in history:
             role = "User" if item["role"] == "user" else "Assistant"
             lines.append(f"{role}: {item['content']}")
@@ -108,45 +204,76 @@ class TelegramCodexBridge:
         lines.append("Assistant:")
         return "\n".join(lines)
 
-    def ask_codex_exec(self, prompt: str, chat_id: int) -> str:
+    def build_cli_command(self, prompt: str, output_path: Path):
+        variables = {
+            "prompt": prompt,
+            "model": self.model,
+            "output_path": str(output_path),
+            "workdir": self.workdir,
+        }
+        return [part.format(**variables) for part in self.cli_command_template]
+
+    def command_binary_status(self):
+        command = self.cli_command_template
+        if not command:
+            return ("missing", "no command configured")
+        binary = command[0]
+        if os.path.isabs(binary):
+            return ("ok" if Path(binary).exists() else "missing", binary)
+        resolved = shutil.which(binary)
+        return ("ok" if resolved else "missing", resolved or binary)
+
+    def extract_response(self, completed: subprocess.CompletedProcess, output_path: Path) -> str:
+        mode = self.cli_response_mode()
+        stdout = (completed.stdout or "").strip()
+        if mode == "output_file":
+            if output_path.exists():
+                text = output_path.read_text(encoding="utf-8").strip()
+                if text:
+                    return text
+            raise RuntimeError(f"{self.provider_label()} did not produce a final message")
+        if mode == "stdout":
+            if stdout:
+                return stdout
+            raise RuntimeError(f"{self.provider_label()} produced empty output")
+        if mode == "json_stdout":
+            if not stdout:
+                raise RuntimeError(f"{self.provider_label()} produced empty output")
+            try:
+                payload = json.loads(stdout)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"{self.provider_label()} returned non-JSON output") from exc
+            text = str(payload.get(self.cli_response_key(), "")).strip()
+            if text:
+                return text
+            error = payload.get("error")
+            if error:
+                raise RuntimeError(f"{self.provider_label()} error: {error}")
+            raise RuntimeError(f"{self.provider_label()} JSON response did not include '{self.cli_response_key()}'")
+        raise RuntimeError(f"Unsupported cli_response_mode: {mode}")
+
+    def ask_cli(self, prompt: str, chat_id: int) -> str:
         run_id = f"{chat_id}-{int(time.time() * 1000)}"
         output_path = BASE_DIR / f".last_message_{run_id}.txt"
         full_prompt = self.build_prompt(prompt, chat_id)
-        cmd = [
-            str(CODEX_NODE),
-            str(CODEX_JS),
-            "exec",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "-C",
-            str(Path.home()),
-            "-m",
-            self.model,
-            "-o",
-            str(output_path),
-            full_prompt,
-        ]
+        cmd = self.build_cli_command(full_prompt, output_path)
         env = dict(os.environ)
-        env["PATH"] = f"{CODEX_NODE.parent}:{env.get('PATH', '')}"
+        env.update({str(k): str(v) for k, v in self.config.get("env", {}).items()})
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 cmd,
-                cwd=str(Path.home()),
+                cwd=self.workdir,
                 env=env,
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=self.codex_timeout,
+                timeout=self.cli_timeout,
             )
-            if output_path.exists():
-                text = output_path.read_text(encoding="utf-8").strip()
-                if text:
-                    return text
-            raise RuntimeError("Codex did not produce a final message")
+            return self.extract_response(completed, output_path)
         except subprocess.CalledProcessError as exc:
             snippet = (exc.stdout or "").strip()[-1200:]
-            raise RuntimeError(f"Codex exec failed. {snippet}") from exc
+            raise RuntimeError(f"{self.provider_label()} execution failed. {snippet}") from exc
         finally:
             try:
                 output_path.unlink(missing_ok=True)
@@ -168,26 +295,39 @@ class TelegramCodexBridge:
             self.send_message(chat_id, "このBotは許可されたユーザー専用です。")
             return
         if text == "/start":
-            self.send_message(chat_id, "接続済みです。メッセージを送ると Codex ブリッジ経由で返答します。")
+            self.send_message(chat_id, f"接続済みです。メッセージを送ると {self.provider_label()} 経由で返答します。")
             return
         if text == "/reset":
             self.state["conversations"][str(chat_id)] = []
             self.send_message(chat_id, "会話履歴をリセットしました。")
             return
         if text == "/help":
-            self.send_message(chat_id, "/start, /help, /reset が使えます。通常メッセージは Codex ブリッジへ送ります。")
+            self.send_message(chat_id, f"/start, /help, /reset, /status が使えます。通常メッセージは {self.provider_label()} へ送ります。")
             return
         if text == "/status":
-            node_ok = CODEX_NODE.exists()
-            js_ok = CODEX_JS.exists()
-            self.send_message(chat_id, f"bridge: running\nallowed_username: @{self.allowed_username}\ncodex_node: {'ok' if node_ok else 'missing'}\ncodex_cli: {'ok' if js_ok else 'missing'}")
+            cli_status, cli_path = self.command_binary_status()
+            self.send_message(
+                chat_id,
+                "\n".join(
+                    [
+                        "bridge: running",
+                        f"allowed_username: @{self.allowed_username}",
+                        f"provider: {self.provider}",
+                        f"cli_label: {self.provider_label()}",
+                        f"cli_command: {self.cli_command_template[0]}",
+                        f"cli_binary: {cli_status}",
+                        f"cli_binary_path: {cli_path}",
+                        f"workdir: {self.workdir}",
+                    ]
+                ),
+            )
             return
         try:
             self.append_history(chat_id, "user", text)
-            answer = self.ask_codex_exec(text, chat_id)
+            answer = self.ask_cli(text, chat_id)
             self.append_history(chat_id, "assistant", answer)
             self.send_message(chat_id, answer)
-            log_line(f"replied to chat_id={chat_id} username={username}")
+            log_line(f"replied to chat_id={chat_id} username={username} provider={self.provider}")
         except Exception as exc:
             log_line(f"error while handling message: {exc}")
             self.send_message(chat_id, f"処理に失敗しました: {exc}")
@@ -217,7 +357,7 @@ def main():
     config = load_json(CONFIG_PATH, None)
     if not config:
         raise SystemExit(f"Missing config file: {CONFIG_PATH}")
-    bridge = TelegramCodexBridge(config)
+    bridge = TelegramCliBridge(config)
     if args.once:
         bridge.run_once()
     else:

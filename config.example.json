@@ -1,8 +1,10 @@
 {
   "telegram_bot_token": "REPLACE_WITH_BOT_TOKEN",
-  "allowed_username": "@cho4649",
+  "allowed_username": "@your_username",
+  "provider": "codex",
   "model": "gpt-5.4",
+  "workdir": "/home/your_user",
   "max_history": 12,
   "telegram_timeout_seconds": 25,
-  "codex_timeout_seconds": 180
+  "cli_timeout_seconds": 180
 }
