@@ -1,5 +1,8 @@
 # telecodex
 
+English comes first in this README, and each section is followed by Japanese.  
+この README は英語が先にあり、各セクションのあとに日本語が続きます。
+
 Telegram Bot messages routed into a local `codex exec` session.  
 Telegram Bot のメッセージを、ローカルの `codex exec` セッションに渡すためのブリッジです。
 
