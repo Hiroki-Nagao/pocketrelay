@@ -125,7 +125,10 @@ def resolve_binary(binary: str):
 class PocketRelayBridge:
     def __init__(self, config):
         self.config = config
-        self.state = load_json(STATE_PATH, {"last_update_id": 0, "conversations": {}})
+        self.state = load_json(
+            STATE_PATH,
+            {"last_update_id": 0, "conversations": {}, "chat_settings": {}},
+        )
         self.bot_token = config["telegram_bot_token"]
         self.allowed_username = config["allowed_username"].lstrip("@").lower()
         self.provider = config.get("provider", "codex").lower()
@@ -140,37 +143,60 @@ class PocketRelayBridge:
         self.telegram_base = f"https://api.telegram.org/bot{self.bot_token}"
         self.workdir = str(Path(config.get("workdir", str(Path.home()))).expanduser())
         self.system_prompt = config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-        self.cli_command_template = self.resolve_command_template()
+        self.state.setdefault("chat_settings", {})
 
-    def resolve_command_template(self):
-        custom_template = normalize_command_template(self.config.get("cli_command_template"))
+    def chat_settings(self, chat_id: int):
+        return self.state["chat_settings"].setdefault(str(chat_id), {})
+
+    def current_provider(self, chat_id: int | None = None) -> str:
+        if chat_id is None:
+            return self.provider
+        return str(self.chat_settings(chat_id).get("provider", self.provider)).lower()
+
+    def set_provider(self, chat_id: int, provider: str):
+        self.chat_settings(chat_id)["provider"] = provider.lower()
+
+    def reset_provider(self, chat_id: int):
+        self.chat_settings(chat_id).pop("provider", None)
+
+    def available_providers(self):
+        providers = []
+        for provider in CLI_PRESETS:
+            readiness, _, _ = self.cli_readiness(provider)
+            providers.append((provider, readiness))
+        return providers
+
+    def resolve_command_template(self, provider: str):
+        custom_template = None
+        if provider == self.provider:
+            custom_template = normalize_command_template(self.config.get("cli_command_template"))
         if custom_template:
             return custom_template
-        preset = CLI_PRESETS.get(self.provider)
+        preset = CLI_PRESETS.get(provider)
         if preset:
             return list(preset["command"])
-        raise ValueError(f"Unsupported provider: {self.provider}")
+        raise ValueError(f"Unsupported provider: {provider}")
 
-    def provider_label(self) -> str:
-        if self.config.get("cli_label"):
+    def provider_label(self, provider: str) -> str:
+        if provider == self.provider and self.config.get("cli_label"):
             return str(self.config["cli_label"])
-        preset = CLI_PRESETS.get(self.provider)
+        preset = CLI_PRESETS.get(provider)
         if preset:
             return preset["label"]
-        return self.provider
+        return provider
 
-    def cli_response_mode(self) -> str:
-        if self.config.get("cli_response_mode"):
+    def cli_response_mode(self, provider: str) -> str:
+        if provider == self.provider and self.config.get("cli_response_mode"):
             return str(self.config["cli_response_mode"])
-        preset = CLI_PRESETS.get(self.provider)
+        preset = CLI_PRESETS.get(provider)
         if preset:
             return preset["response_mode"]
         return "stdout"
 
-    def cli_response_key(self) -> str:
-        if self.config.get("cli_response_key"):
+    def cli_response_key(self, provider: str) -> str:
+        if provider == self.provider and self.config.get("cli_response_key"):
             return str(self.config["cli_response_key"])
-        preset = CLI_PRESETS.get(self.provider)
+        preset = CLI_PRESETS.get(provider)
         if preset:
             return preset.get("response_key", "response")
         return "response"
@@ -212,25 +238,26 @@ class PocketRelayBridge:
         lines.append("Assistant:")
         return "\n".join(lines)
 
-    def build_cli_command(self, prompt: str, output_path: Path):
+    def build_cli_command(self, provider: str, prompt: str, output_path: Path):
+        command_template = self.resolve_command_template(provider)
         variables = {
             "prompt": prompt,
             "model": self.model,
             "output_path": str(output_path),
             "workdir": self.workdir,
         }
-        return [part.format(**variables) for part in self.cli_command_template]
+        return [part.format(**variables) for part in command_template]
 
-    def command_binary_status(self):
-        command = self.cli_command_template
+    def command_binary_status(self, provider: str):
+        command = self.resolve_command_template(provider)
         if not command:
             return ("missing", "no command configured")
         binary = command[0]
         resolved = resolve_binary(binary)
         return ("ok" if resolved else "missing", str(resolved or binary))
 
-    def command_runtime_diagnostics(self):
-        command = self.cli_command_template
+    def command_runtime_diagnostics(self, provider: str):
+        command = self.resolve_command_template(provider)
         if not command:
             return [("missing", "cli_command", "no command configured")]
         issues = []
@@ -272,53 +299,56 @@ class PocketRelayBridge:
             )
         return issues
 
-    def cli_readiness(self):
-        diagnostics = self.command_runtime_diagnostics()
+    def cli_readiness(self, provider: str):
+        diagnostics = self.command_runtime_diagnostics(provider)
         missing = [item for item in diagnostics if item[0] != "ok"]
         if missing:
             parts = [f"{kind}={value}" for _, kind, value in missing]
             return ("error", "missing dependencies: " + ", ".join(parts), diagnostics)
         return ("ok", "ready", diagnostics)
 
-    def extract_response(self, completed: subprocess.CompletedProcess, output_path: Path) -> str:
-        mode = self.cli_response_mode()
+    def extract_response(self, provider: str, completed: subprocess.CompletedProcess, output_path: Path) -> str:
+        mode = self.cli_response_mode(provider)
         stdout = (completed.stdout or "").strip()
         if mode == "output_file":
             if output_path.exists():
                 text = output_path.read_text(encoding="utf-8").strip()
                 if text:
                     return text
-            raise RuntimeError(f"{self.provider_label()} did not produce a final message")
+            raise RuntimeError(f"{self.provider_label(provider)} did not produce a final message")
         if mode == "stdout":
             if stdout:
                 return stdout
-            raise RuntimeError(f"{self.provider_label()} produced empty output")
+            raise RuntimeError(f"{self.provider_label(provider)} produced empty output")
         if mode == "json_stdout":
             if not stdout:
-                raise RuntimeError(f"{self.provider_label()} produced empty output")
+                raise RuntimeError(f"{self.provider_label(provider)} produced empty output")
             try:
                 payload = json.loads(stdout)
             except json.JSONDecodeError as exc:
-                raise RuntimeError(f"{self.provider_label()} returned non-JSON output") from exc
-            text = str(payload.get(self.cli_response_key(), "")).strip()
+                raise RuntimeError(f"{self.provider_label(provider)} returned non-JSON output") from exc
+            text = str(payload.get(self.cli_response_key(provider), "")).strip()
             if text:
                 return text
             error = payload.get("error")
             if error:
-                raise RuntimeError(f"{self.provider_label()} error: {error}")
-            raise RuntimeError(f"{self.provider_label()} JSON response did not include '{self.cli_response_key()}'")
+                raise RuntimeError(f"{self.provider_label(provider)} error: {error}")
+            raise RuntimeError(
+                f"{self.provider_label(provider)} JSON response did not include '{self.cli_response_key(provider)}'"
+            )
         raise RuntimeError(f"Unsupported cli_response_mode: {mode}")
 
     def ask_cli(self, prompt: str, chat_id: int) -> str:
+        provider = self.current_provider(chat_id)
         run_id = f"{chat_id}-{int(time.time() * 1000)}"
         output_path = BASE_DIR / f".last_message_{run_id}.txt"
         full_prompt = self.build_prompt(prompt, chat_id)
-        cmd = self.build_cli_command(full_prompt, output_path)
+        cmd = self.build_cli_command(provider, full_prompt, output_path)
         env = dict(os.environ)
         env.update({str(k): str(v) for k, v in self.config.get("env", {}).items()})
-        readiness, message, _ = self.cli_readiness()
+        readiness, message, _ = self.cli_readiness(provider)
         if readiness != "ok":
-            raise RuntimeError(f"{self.provider_label()} is not ready: {message}")
+            raise RuntimeError(f"{self.provider_label(provider)} is not ready: {message}")
         try:
             completed = subprocess.run(
                 cmd,
@@ -330,16 +360,16 @@ class PocketRelayBridge:
                 text=True,
                 timeout=self.cli_timeout,
             )
-            return self.extract_response(completed, output_path)
+            return self.extract_response(provider, completed, output_path)
         except FileNotFoundError as exc:
             missing_name = exc.filename or cmd[0]
             raise RuntimeError(
-                f"{self.provider_label()} is not ready: missing executable '{missing_name}'. "
+                f"{self.provider_label(provider)} is not ready: missing executable '{missing_name}'. "
                 "Check the service PATH or cli_command_template."
             ) from exc
         except subprocess.CalledProcessError as exc:
             snippet = (exc.stdout or "").strip()[-1200:]
-            raise RuntimeError(f"{self.provider_label()} execution failed. {snippet}") from exc
+            raise RuntimeError(f"{self.provider_label(provider)} execution failed. {snippet}") from exc
         finally:
             try:
                 output_path.unlink(missing_ok=True)
@@ -360,19 +390,56 @@ class PocketRelayBridge:
             log_line(f"ignored message from username={username!r}")
             self.send_message(chat_id, "このBotは許可されたユーザー専用です。")
             return
+        provider = self.current_provider(chat_id)
         if text == "/start":
-            self.send_message(chat_id, f"接続済みです。メッセージを送ると {self.provider_label()} 経由で返答します。")
+            self.send_message(chat_id, f"接続済みです。メッセージを送ると {self.provider_label(provider)} 経由で返答します。")
             return
         if text == "/reset":
             self.state["conversations"][str(chat_id)] = []
             self.send_message(chat_id, "会話履歴をリセットしました。")
             return
+        if text.startswith("/provider"):
+            parts = text.split()
+            if len(parts) == 1:
+                available = ", ".join(
+                    f"{name}({status})" for name, status in self.available_providers()
+                )
+                self.send_message(
+                    chat_id,
+                    "\n".join(
+                        [
+                            f"current_provider: {provider}",
+                            f"default_provider: {self.provider}",
+                            f"available_providers: {available}",
+                            "usage: /provider codex | /provider claude | /provider gemini | /provider reset",
+                        ]
+                    ),
+                )
+                return
+            requested = parts[1].lower()
+            if requested == "reset":
+                self.reset_provider(chat_id)
+                self.send_message(chat_id, f"provider を既定値 {self.provider} に戻しました。")
+                return
+            if requested not in CLI_PRESETS:
+                self.send_message(chat_id, f"未対応の provider です: {requested}")
+                return
+            self.set_provider(chat_id, requested)
+            readiness, readiness_message, _ = self.cli_readiness(requested)
+            self.send_message(
+                chat_id,
+                f"provider を {requested} に変更しました。readiness={readiness} ({readiness_message})",
+            )
+            return
         if text == "/help":
-            self.send_message(chat_id, f"/start, /help, /reset, /status が使えます。通常メッセージは {self.provider_label()} へ送ります。")
+            self.send_message(
+                chat_id,
+                f"/start, /help, /reset, /status, /provider が使えます。通常メッセージは {self.provider_label(provider)} へ送ります。",
+            )
             return
         if text == "/status":
-            cli_status, cli_path = self.command_binary_status()
-            readiness, readiness_message, diagnostics = self.cli_readiness()
+            cli_status, cli_path = self.command_binary_status(provider)
+            readiness, readiness_message, diagnostics = self.cli_readiness(provider)
             diagnostic_lines = [f"{kind}: {name}={value}" for kind, name, value in diagnostics]
             self.send_message(
                 chat_id,
@@ -380,9 +447,10 @@ class PocketRelayBridge:
                     [
                         "bridge: running",
                         f"allowed_username: @{self.allowed_username}",
-                        f"provider: {self.provider}",
-                        f"cli_label: {self.provider_label()}",
-                        f"cli_command: {self.cli_command_template[0]}",
+                        f"default_provider: {self.provider}",
+                        f"provider: {provider}",
+                        f"cli_label: {self.provider_label(provider)}",
+                        f"cli_command: {self.resolve_command_template(provider)[0]}",
                         f"cli_binary: {cli_status}",
                         f"cli_binary_path: {cli_path}",
                         f"cli_readiness: {readiness}",
@@ -398,7 +466,7 @@ class PocketRelayBridge:
             answer = self.ask_cli(text, chat_id)
             self.append_history(chat_id, "assistant", answer)
             self.send_message(chat_id, answer)
-            log_line(f"replied to chat_id={chat_id} username={username} provider={self.provider}")
+            log_line(f"replied to chat_id={chat_id} username={username} provider={provider}")
         except Exception as exc:
             log_line(f"error while handling message: {exc}")
             self.send_message(chat_id, f"処理に失敗しました: {exc}")
@@ -429,7 +497,7 @@ def main():
     if not config:
         raise SystemExit(f"Missing config file: {CONFIG_PATH}")
     bridge = PocketRelayBridge(config)
-    readiness, readiness_message, diagnostics = bridge.cli_readiness()
+    readiness, readiness_message, diagnostics = bridge.cli_readiness(bridge.provider)
     if readiness != "ok":
         summary = ", ".join(f"{kind}={value}" for _, kind, value in diagnostics)
         log_line(f"cli readiness warning: {readiness_message} ({summary})")
