@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -114,6 +115,14 @@ def normalize_command_template(value):
     raise ValueError("cli_command_template must be a string or a list of strings")
 
 
+def resolve_binary(binary: str):
+    if os.path.isabs(binary):
+        path = Path(binary)
+        return path if path.exists() else None
+    resolved = shutil.which(binary)
+    return Path(resolved) if resolved else None
+
+
 class PocketRelayBridge:
     def __init__(self, config):
         self.config = config
@@ -218,10 +227,59 @@ class PocketRelayBridge:
         if not command:
             return ("missing", "no command configured")
         binary = command[0]
-        if os.path.isabs(binary):
-            return ("ok" if Path(binary).exists() else "missing", binary)
-        resolved = shutil.which(binary)
-        return ("ok" if resolved else "missing", resolved or binary)
+        resolved = resolve_binary(binary)
+        return ("ok" if resolved else "missing", str(resolved or binary))
+
+    def command_runtime_diagnostics(self):
+        command = self.cli_command_template
+        if not command:
+            return [("missing", "cli_command", "no command configured")]
+        issues = []
+        binary = command[0]
+        resolved = resolve_binary(binary)
+        if not resolved:
+            return [("missing", "cli_binary", binary)]
+        issues.append(("ok", "cli_binary", str(resolved)))
+
+        try:
+            with resolved.open("r", encoding="utf-8", errors="replace") as f:
+                shebang = f.readline().strip()
+        except OSError:
+            return issues
+
+        if not shebang.startswith("#!"):
+            return issues
+
+        shebang_parts = shlex.split(shebang[2:].strip())
+        if len(shebang_parts) >= 2 and Path(shebang_parts[0]).name == "env":
+            interpreter = shebang_parts[1]
+            interpreter_resolved = resolve_binary(interpreter)
+            issues.append(
+                (
+                    "ok" if interpreter_resolved else "missing",
+                    "shebang_dependency",
+                    str(interpreter_resolved or interpreter),
+                )
+            )
+        elif shebang_parts:
+            interpreter = shebang_parts[0]
+            interpreter_path = Path(interpreter)
+            issues.append(
+                (
+                    "ok" if interpreter_path.exists() else "missing",
+                    "shebang_dependency",
+                    interpreter,
+                )
+            )
+        return issues
+
+    def cli_readiness(self):
+        diagnostics = self.command_runtime_diagnostics()
+        missing = [item for item in diagnostics if item[0] != "ok"]
+        if missing:
+            parts = [f"{kind}={value}" for _, kind, value in missing]
+            return ("error", "missing dependencies: " + ", ".join(parts), diagnostics)
+        return ("ok", "ready", diagnostics)
 
     def extract_response(self, completed: subprocess.CompletedProcess, output_path: Path) -> str:
         mode = self.cli_response_mode()
@@ -259,6 +317,9 @@ class PocketRelayBridge:
         cmd = self.build_cli_command(full_prompt, output_path)
         env = dict(os.environ)
         env.update({str(k): str(v) for k, v in self.config.get("env", {}).items()})
+        readiness, message, _ = self.cli_readiness()
+        if readiness != "ok":
+            raise RuntimeError(f"{self.provider_label()} is not ready: {message}")
         try:
             completed = subprocess.run(
                 cmd,
@@ -271,6 +332,12 @@ class PocketRelayBridge:
                 timeout=self.cli_timeout,
             )
             return self.extract_response(completed, output_path)
+        except FileNotFoundError as exc:
+            missing_name = exc.filename or cmd[0]
+            raise RuntimeError(
+                f"{self.provider_label()} is not ready: missing executable '{missing_name}'. "
+                "Check the service PATH or cli_command_template."
+            ) from exc
         except subprocess.CalledProcessError as exc:
             snippet = (exc.stdout or "").strip()[-1200:]
             raise RuntimeError(f"{self.provider_label()} execution failed. {snippet}") from exc
@@ -306,6 +373,8 @@ class PocketRelayBridge:
             return
         if text == "/status":
             cli_status, cli_path = self.command_binary_status()
+            readiness, readiness_message, diagnostics = self.cli_readiness()
+            diagnostic_lines = [f"{kind}: {name}={value}" for kind, name, value in diagnostics]
             self.send_message(
                 chat_id,
                 "\n".join(
@@ -317,7 +386,10 @@ class PocketRelayBridge:
                         f"cli_command: {self.cli_command_template[0]}",
                         f"cli_binary: {cli_status}",
                         f"cli_binary_path: {cli_path}",
+                        f"cli_readiness: {readiness}",
+                        f"cli_readiness_message: {readiness_message}",
                         f"workdir: {self.workdir}",
+                        *diagnostic_lines,
                     ]
                 ),
             )
@@ -358,6 +430,10 @@ def main():
     if not config:
         raise SystemExit(f"Missing config file: {CONFIG_PATH}")
     bridge = PocketRelayBridge(config)
+    readiness, readiness_message, diagnostics = bridge.cli_readiness()
+    if readiness != "ok":
+        summary = ", ".join(f"{kind}={value}" for _, kind, value in diagnostics)
+        log_line(f"cli readiness warning: {readiness_message} ({summary})")
     if args.once:
         bridge.run_once()
     else:
