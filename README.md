@@ -2,46 +2,40 @@
 
 [日本語版はこちら](README.ja.md)
 
-Pocketrelay is a lightweight way to work through local AI coding CLIs such as Codex CLI, Claude Code, and Gemini CLI from your phone.
+Pocketrelay is a lightweight bridge that lets you talk to local AI coding CLIs from Telegram. It reuses the tools and login state that already exist on your own machine, such as Codex CLI, Claude Code, and Gemini CLI.
 
-It is not specific to Raspberry Pi. A Raspberry Pi is just one example of a small always-on host; Pocketrelay is meant for any user-managed machine where your CLI tools, repositories, and auth state already live.
-
-## What Pocketrelay Means
-
-`Pocketrelay` means "relay my local development environment to my pocket." The idea is simple: even when you are away from your desk, you can open Telegram on your phone and keep using the machine and CLI setup you already trust.
+It is not Raspberry Pi specific. A Raspberry Pi is just one useful always-on host. Pocketrelay is designed for any user-managed machine where Python 3 and your target CLI can run.
 
 ## Why It Exists
 
-Pocketrelay is not just another API wrapper. Its value is that it reuses your existing local setup instead of asking you to rebuild your workflow around a hosted service.
+Pocketrelay is useful because it gives your phone a direct path to your normal development environment.
 
-Why that helps:
-
-- Reuse the CLI login state you already have on your machine
-- Keep using the same local tools, repos, shell environment, and files you already work with
-- Send a prompt from your phone during a break instead of sitting at your desk
-- Avoid standing up a separate API service just to reach your own machine
-- Switch between Codex, Claude, Gemini, or a custom CLI behind the same Telegram entry point
+- Send tasks to local Codex, Claude, or Gemini from Telegram
+- Reuse local repositories, shell environment, config files, and authenticated CLIs
+- Keep small investigations, edits, and Git tasks moving while away from your desk
+- Avoid building a separate API service just to reach your own machine
+- Switch providers from chat when one tool is a better fit or hits a limit
+- Resume Codex sessions so follow-up work can continue naturally
 
 ## What It Does
 
-- Receives Telegram messages through a bot
-- Restricts access to one allowed Telegram username
-- Invokes a local AI CLI for each request
-- Supports built-in presets for `codex`, `claude`, and `gemini`
-- Can switch provider per chat through Telegram commands such as `/provider codex`
-- Can show and reset Codex sessions with `/session`
-- Allows a fully custom command template when presets are not enough
-- Resumes persisted Codex CLI sessions instead of injecting recent Telegram messages into every prompt
+- Receives Telegram Bot messages
+- Responds only to one allowed Telegram username
+- Switches between `codex`, `claude`, and `gemini`
+- Stores and resumes Codex CLI sessions
+- Queues likely Codex approval failures for one-time retry from Telegram
+- Sends start, still-running, and stdout-derived progress updates while a CLI is running
+- Supports custom command templates for other local CLIs
 
 ## How It Works
 
-Pocketrelay does not call OpenAI, Anthropic, or Google APIs directly. Instead, it reuses the login state and local behavior of a CLI that is already installed on your machine, then invokes that CLI for each Telegram message.
+Pocketrelay does not call OpenAI, Anthropic, or Google APIs directly. It receives a Telegram message, runs a CLI installed on the same machine as a subprocess, and sends the result back to Telegram.
 
 ```mermaid
 flowchart LR
-    U[Telegram User] --> B[Telegram Bot]
+    U[Telegram] --> B[Telegram Bot]
     B --> P[Pocketrelay bridge.py]
-    P --> S[Per-chat state and provider selection]
+    P --> S[chat state]
     S --> C1[Codex CLI]
     S --> C2[Claude Code]
     S --> C3[Gemini CLI]
@@ -52,20 +46,41 @@ flowchart LR
     B --> U
 ```
 
-## Supported Providers
+## Providers
 
-- `codex` — Runs `codex exec ...` and reads the final answer from the output file.
-- `claude` — Runs `claude -p ...` and reads the answer from stdout.
-- `gemini` — Runs `gemini -p ... --output-format json` and reads the `response` field.
+| provider | Command style | Response source |
+| --- | --- | --- |
+| `codex` | `codex exec ...` | output file passed with `-o` |
+| `claude` | `claude -p ... --output-format text` | stdout |
+| `gemini` | `gemini -p ... --output-format json` | `response` in JSON stdout |
 
-Anthropic documents `claude -p` and `--output-format`; Google documents Gemini CLI headless mode with `-p` and `--output-format json`.
+The default `provider` is configured in `config.json`. You can switch per chat with commands such as `/provider codex`.
 
-- Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference
-- Gemini CLI headless mode: https://google-gemini.github.io/gemini-cli/docs/cli/headless.html
+## Setup
+
+1. Create a Telegram bot with BotFather and copy the bot token.
+2. Put this repository on the machine you want to keep running.
+3. Install and authenticate your target CLI on that machine, for example Codex CLI, Claude Code, or Gemini CLI.
+4. Create a local config file.
+
+```bash
+cp config.example.json config.json
+```
+
+5. Edit `telegram_bot_token`, `allowed_username`, `provider`, `model`, and `workdir` in `config.json`.
+6. Run once to check that updates can be received and handled.
+
+```bash
+python3 bridge.py --once
+```
+
+7. Run continuously.
+
+```bash
+python3 bridge.py
+```
 
 ## Configuration
-
-Minimal example:
 
 ```json
 {
@@ -95,147 +110,97 @@ Minimal example:
   "progress_interval_seconds": 30,
   "progress_output_interval_seconds": 15,
   "progress_line_max_chars": 240,
-  "system_prompt": "You are Codex, a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.\nKeep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,\nGitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.\nIf you are unsure, state uncertainty directly."
+  "system_prompt": "You are Codex, a pragmatic coding assistant running through a Telegram bridge.\nKeep answers concise and actionable."
 }
 ```
 
 Important keys:
 
-- `provider`: one of `codex`, `claude`, `gemini` — the default provider used unless a chat overrides it with `/provider`
-- `model`: passed through to the selected CLI
+- `telegram_bot_token`: Telegram Bot token
+- `allowed_username`: Telegram username allowed to use the bot
+- `provider`: default provider, one of `codex`, `claude`, or `gemini`
+- `model`: model name passed to the selected CLI
 - `workdir`: working directory used when launching the CLI
-- `codex_sessions`: whether to use persisted Codex CLI sessions. When `true`, the first request creates a session and later requests use `codex exec resume`
-- `codex_approval_mode`: Codex approval mode: `queue`, `safe`, `read-only`, `full-auto`, or `dangerous`
-- `cli_timeout_seconds`: timeout for the local CLI process
-- `processing_message`: message sent to Telegram before launching the CLI; set it to an empty string to disable it
-- `progress_updates`: whether Pocketrelay sends start, still-running, and stdout-derived progress updates to Telegram while the CLI is running
-- `progress_interval_seconds`: interval for still-running updates when the CLI has not emitted visible output
-- `progress_output_interval_seconds`: minimum interval for forwarding CLI stdout progress lines to Telegram
-- `progress_line_max_chars`: maximum length of each stdout-derived progress line sent to Telegram
-- `system_prompt`: optional replacement for the built-in system prompt
-- `env`: optional object of extra environment variables
-- `cli_command_template`: optional string or string array for a fully custom command template
-- `cli_response_mode`: optional override for how output is read: `output_file`, `stdout`, or `json_stdout`
-- `cli_response_key`: optional JSON key when `cli_response_mode` is `json_stdout`
+- `codex_sessions`: whether to store and resume Codex CLI sessions
+- `codex_approval_mode`: Codex execution mode: `queue`, `safe`, `read-only`, `full-auto`, or `dangerous`
+- `cli_timeout_seconds`: timeout for each CLI run
+- `processing_message`: acknowledgement sent before launching the CLI
+- `progress_updates`: whether runtime progress updates are sent to Telegram
+- `progress_interval_seconds`: still-running update interval when stdout is quiet
+- `progress_output_interval_seconds`: minimum interval for stdout-derived progress updates
+- `progress_line_max_chars`: maximum length of a stdout line forwarded as progress
+- `system_prompt`: system instruction attached to the initial prompt
+- `env`: extra environment variables for the CLI process
+- `cli_command_template`: command template override for the provider
+- `cli_response_mode`: response reader: `output_file`, `stdout`, or `json_stdout`
+- `cli_response_key`: JSON key used when `cli_response_mode` is `json_stdout`
 
-Available placeholders inside `cli_command_template`:
+Available placeholders in `cli_command_template`:
 
 - `{prompt}`
 - `{model}`
 - `{workdir}`
 - `{output_path}`
 
-Example custom template:
+## Telegram Commands
 
-```json
-{
-  "provider": "custom-tool",
-  "cli_label": "My Local Agent",
-  "cli_command_template": [
-    "/usr/local/bin/my-agent",
-    "--model",
-    "{model}",
-    "--prompt",
-    "{prompt}"
-  ],
-  "cli_response_mode": "stdout"
-}
+### Basics
+
+- `/start`: connection check
+- `/help`: show available commands
+- `/status`: show provider, CLI readiness, workdir, progress settings, and related state
+- `/reset`: clear conversation history and saved sessions
+
+### Provider Switching
+
+- `/provider`: show the current provider and available providers
+- `/provider codex`: switch this chat to Codex
+- `/provider claude`: switch this chat to Claude
+- `/provider gemini`: switch this chat to Gemini
+- `/provider reset`: return this chat to the default provider in `config.json`
+
+### Codex Sessions
+
+- `/session`: show the current session state
+- `/session status`: same as `/session`
+- `/session new`: clear the saved session for the current provider so the next request starts fresh
+- `/session reset`: same as `/session new`
+
+When `codex_sessions` is `true`, Pocketrelay stores the Codex CLI session id in `state.json` and uses `codex exec resume` for later requests.
+
+### Codex Approval Modes
+
+- `/approval`: show the current approval mode and pending queue
+- `/approval queue`: run with safe defaults and queue likely approval failures
+- `/approval safe`: run without additional approval flags
+- `/approval read-only`: run with read-only sandboxing
+- `/approval full-auto`: run with `--full-auto`
+- `/approval dangerous`: bypass approvals and sandboxing
+- `/approval reset`: return to the default configured mode
+- `/approve <approval_id> full-auto`: retry a queued request once with `full-auto`
+- `/approve <approval_id> dangerous`: retry a queued request once with `dangerous`
+- `/deny <approval_id>`: cancel a queued request
+
+`dangerous` can significantly affect the local machine. Prefer using it only for a specific queued retry.
+
+## Progress Updates
+
+For normal messages, Pocketrelay first sends `processing_message`. It then reports that the CLI has started, forwards throttled stdout snippets, and sends still-running updates when the CLI is quiet.
+
+Example:
+
+```text
+受け付けました。処理中です。
+Codex CLI を起動しました。処理を開始しています。
+進捗: ...
+処理継続中です。経過 30 秒。
 ```
 
-Claude Code with an explicit binary path:
-
-```json
-{
-  "provider": "claude",
-  "model": "sonnet",
-  "cli_command_template": [
-    "/home/your_user/.nvm/versions/node/v24.15.0/bin/claude",
-    "-p",
-    "--output-format",
-    "text",
-    "--model",
-    "{model}",
-    "{prompt}"
-  ],
-  "cli_response_mode": "stdout"
-}
-```
-
-## Setup
-
-1. Clone the repository.
-2. Copy the config template.
-3. Fill in your bot token and allowed Telegram username.
-4. Set `provider`, `model`, and `workdir`.
-5. Make sure the selected CLI is installed and authenticated on the same machine.
-6. Run once to verify it works.
-
-```bash
-cp config.example.json config.json
-python3 bridge.py --once
-```
-
-To run continuously:
-
-```bash
-python3 bridge.py
-```
-
-## Environment Notes
-
-- A Raspberry Pi is a valid example host, but not a requirement
-- The main intended environment is a Linux machine with Python 3 and your target CLI already installed
-- The same design can work on other user-managed environments if the CLI behaves the same way there
-
-## Commands
-
-- `/start`
-- `/help`
-- `/reset`
-- `/status`
-- `/provider`
-- `/provider codex`
-- `/provider claude`
-- `/provider gemini`
-- `/provider reset`
-- `/session`
-- `/session status`
-- `/session new`
-- `/session reset`
-- `/approval`
-- `/approval status`
-- `/approval queue`
-- `/approval safe`
-- `/approval read-only`
-- `/approval full-auto`
-- `/approval dangerous`
-- `/approval reset`
-- `/approve <approval_id> [full-auto|dangerous]`
-- `/deny <approval_id>`
-
-`/status` shows the current provider for that chat, the default provider, configured command, binary availability, readiness diagnostics, and working directory.
-
-`/provider` without an argument shows the current provider and available choices.
-
-`/provider codex` or `/provider claude` switches only the current chat, which is useful when one CLI hits rate limits or usage caps.
-
-`/provider reset` returns the chat to the default provider from `config.json`.
-
-When a provider is missing dependencies, Pocketrelay reports that explicitly instead of failing with a vague subprocess error.
-
-`/session status` shows the current provider and saved session ID.
-
-`/session new` and `/session reset` clear the saved session ID for the current provider. The next normal message creates a new Codex session.
-
-`/approval status` shows the current approval mode and pending approval queue.
-
-`/approval queue` runs with safe settings and stores likely approval-related failures in the queue. Use `/approve <id> full-auto` or `/approve <id> dangerous` to rerun the same prompt once.
-
-`/approval safe` runs without extra approval flags, `/approval read-only` uses the read-only sandbox, `/approval full-auto` passes `--full-auto`, and `/approval dangerous` passes `--dangerously-bypass-approvals-and-sandbox`. Prefer using `dangerous` only for a specific queued retry.
+If this is too noisy, set `progress_updates` to `false` or increase `progress_interval_seconds` and `progress_output_interval_seconds`.
 
 ## systemd User Service
 
-An example service file is included at `systemd/pocketrelay.service`. Update the repository path before enabling the service.
+To keep Pocketrelay running, edit `systemd/pocketrelay.service` for your local paths and install it as a user service.
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -244,51 +209,47 @@ systemctl --user daemon-reload
 systemctl --user enable --now pocketrelay.service
 ```
 
-## Node Version Management (nvm)
-
-When using nvm, each Node.js version has its own `bin` directory. `codex` and `claude` must be installed in the version whose path the systemd service uses.
-
-The service file sets PATH explicitly, for example:
-
-```ini
-Environment=PATH=/home/your_user/.nvm/versions/node/v24.15.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-```
-
-If the CLI is missing from that version, the service will fail to find it even if it runs fine in your interactive shell.
-
-**To install both CLIs under the pinned version:**
+Check status:
 
 ```bash
-nvm use v24.15.0
-npm install -g @openai/codex
-npm install -g @anthropic-ai/claude-code
+systemctl --user status pocketrelay.service
 ```
 
-**If you switch the default nvm version, reinstall both CLIs for the new version and update the PATH line in the service file.**
+If your CLIs are installed through nvm, make sure the service `PATH` includes the Node.js `bin` directory that contains `codex`, `claude`, or `gemini`. Add an explicit `Environment=PATH=...` line to the service file.
 
-```bash
-# Change default version
-nvm alias default v24.15.0
+## Local Files
 
-# Update service PATH, then reload
-systemctl --user daemon-reload
-systemctl --user restart pocketrelay.service
-```
+- `config.json`: local config. It contains the bot token and should not be committed
+- `state.json`: update id, chat settings, Codex session ids, and approval queue
+- `bridge.log`: runtime log
+- `.last_message_*.txt`: temporary CLI output files, normally deleted after each run
 
-To verify which binary the service will actually resolve, run `/status` in Telegram. The `cli_binary_path` and `cli_readiness` fields reflect the PATH the service sees.
+## Security Notes
 
-## Limitations
+- Do not publish `config.json` or your Telegram Bot token
+- `allowed_username` is simple access control, not a hardened multi-user auth system
+- Pocketrelay is intended for personal use on a user-managed machine
+- `dangerous` mode can affect local files and command execution
+- Avoid adding the bot to groups with other users
 
-- Codex context is handled by persisted Codex CLI sessions. Claude/Gemini context is limited to each headless CLI run unless those CLIs add compatible session support
-- Provider switching is chat-scoped, but model and extra environment variables are still shared globally through `config.json`
-- CLI behavior can change over time, so presets may need updates if upstream flags change
-- Access control is username-based, which is simple but not the strongest option
-- The project assumes you are running it on a machine you already manage, not as a hardened multi-tenant service
+## Troubleshooting
 
-## Files
+### Telegram does not respond
 
-- `bridge.py`: main bridge process
-- `config.example.json`: configuration template
-- `systemd/pocketrelay.service`: example user service
-- `state.json`: runtime state file, created locally
-- `bridge.log`: runtime log file, created locally
+- Run `python3 bridge.py --once` and check for exceptions
+- Verify the bot token
+- Verify `allowed_username`
+- Make sure another process is not using `getUpdates` with the same bot token
+
+### CLI is missing
+
+- Check `cli_binary` and `cli_readiness` in `/status`
+- Check the service `PATH` if running under systemd
+- If using nvm, ensure the CLI is installed in the fixed Node.js version used by the service
+
+### A request gets stuck or fails
+
+- Check `/approval status`
+- Retry a queued request with `/approve <id> full-auto` if appropriate
+- Confirm `cli_timeout_seconds` is long enough for the task
+
