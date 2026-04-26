@@ -91,6 +91,10 @@ Minimal example:
   "telegram_timeout_seconds": 25,
   "cli_timeout_seconds": 600,
   "processing_message": "受け付けました。処理中です。",
+  "progress_updates": true,
+  "progress_interval_seconds": 30,
+  "progress_output_interval_seconds": 15,
+  "progress_line_max_chars": 240,
   "system_prompt": "You are Codex, a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.\nKeep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,\nGitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.\nIf you are unsure, state uncertainty directly."
 }
 ```
@@ -104,6 +108,10 @@ Important keys:
 - `codex_approval_mode`: Codex approval mode: `queue`, `safe`, `read-only`, `full-auto`, or `dangerous`
 - `cli_timeout_seconds`: timeout for the local CLI process
 - `processing_message`: message sent to Telegram before launching the CLI; set it to an empty string to disable it
+- `progress_updates`: whether Pocketrelay sends start, still-running, and stdout-derived progress updates to Telegram while the CLI is running
+- `progress_interval_seconds`: interval for still-running updates when the CLI has not emitted visible output
+- `progress_output_interval_seconds`: minimum interval for forwarding CLI stdout progress lines to Telegram
+- `progress_line_max_chars`: maximum length of each stdout-derived progress line sent to Telegram
 - `system_prompt`: optional replacement for the built-in system prompt
 - `env`: optional object of extra environment variables
 - `cli_command_template`: optional string or string array for a fully custom command template

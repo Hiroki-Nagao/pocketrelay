@@ -89,6 +89,10 @@ Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の 
   "telegram_timeout_seconds": 25,
   "cli_timeout_seconds": 600,
   "processing_message": "受け付けました。処理中です。",
+  "progress_updates": true,
+  "progress_interval_seconds": 30,
+  "progress_output_interval_seconds": 15,
+  "progress_line_max_chars": 240,
   "system_prompt": "You are Codex, a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.\nKeep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,\nGitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.\nIf you are unsure, state uncertainty directly."
 }
 ```
@@ -102,6 +106,10 @@ Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の 
 - `codex_approval_mode`: Codex の承認モードです。`queue`、`safe`、`read-only`、`full-auto`、`dangerous` が使えます
 - `cli_timeout_seconds`: ローカル CLI プロセスのタイムアウトです
 - `processing_message`: CLI 実行前に Telegram へ先に返すメッセージです。空文字にすると無効化できます
+- `progress_updates`: CLI 実行中の開始・継続・stdout 進捗通知を Telegram へ送るかどうかです
+- `progress_interval_seconds`: stdout がしばらく出ない場合に「処理継続中です」を送る間隔です
+- `progress_output_interval_seconds`: CLI stdout 由来の進捗行を Telegram へ送る最短間隔です
+- `progress_line_max_chars`: stdout 由来の進捗行を Telegram へ流す時の最大文字数です
 - `system_prompt`: 内蔵のシステムプロンプトを差し替える任意設定です
 - `env`: 追加の環境変数を渡す任意オブジェクトです
 - `cli_command_template`: 完全なカスタムコマンドテンプレートを指定する任意設定です

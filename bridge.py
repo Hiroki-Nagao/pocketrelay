@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+import select
 import shlex
 import shutil
 import subprocess
@@ -87,6 +88,7 @@ APPROVAL_BLOCK_PATTERNS = (
     "network",
     "temporary failure in name resolution",
 )
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 class ApprovalRequired(RuntimeError):
@@ -179,6 +181,10 @@ class PocketRelayBridge:
         self.processing_message = str(
             config.get("processing_message", "受け付けました。処理中です。")
         ).strip()
+        self.progress_updates = bool(config.get("progress_updates", True))
+        self.progress_interval = max(10, int(config.get("progress_interval_seconds", 30)))
+        self.progress_output_interval = max(5, int(config.get("progress_output_interval_seconds", 15)))
+        self.progress_line_max_chars = max(80, int(config.get("progress_line_max_chars", 240)))
         self.telegram_base = f"https://api.telegram.org/bot{self.bot_token}"
         self.workdir = str(Path(config.get("workdir", str(Path.home()))).expanduser())
         self.system_prompt = config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
@@ -466,6 +472,78 @@ class PocketRelayBridge:
         match = SESSION_ID_PATTERN.search(completed.stdout or "")
         return match.group(1) if match else None
 
+    def progress_text_from_line(self, provider: str, line: str) -> str | None:
+        text = ANSI_ESCAPE_PATTERN.sub("", line).strip()
+        if not text:
+            return None
+        if self.cli_response_mode(provider) == "json_stdout" and text.startswith("{"):
+            return None
+        collapsed = " ".join(text.split())
+        if len(collapsed) > self.progress_line_max_chars:
+            collapsed = collapsed[: self.progress_line_max_chars - 3] + "..."
+        return collapsed
+
+    def send_progress(self, chat_id: int, text: str):
+        if self.progress_updates:
+            self.send_message(chat_id, text)
+
+    def run_cli_with_progress(self, cmd, provider: str, chat_id: int, env) -> subprocess.CompletedProcess:
+        started_at = time.monotonic()
+        last_periodic_notice = started_at
+        last_output_notice = 0.0
+        stdout_parts = []
+        label = self.provider_label(provider)
+        self.send_progress(chat_id, f"{label} を起動しました。処理を開始しています。")
+        process = subprocess.Popen(
+            cmd,
+            cwd=self.workdir,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        try:
+            while True:
+                now = time.monotonic()
+                if now - started_at > self.cli_timeout:
+                    process.kill()
+                    remaining, _ = process.communicate()
+                    if remaining:
+                        stdout_parts.append(remaining)
+                    raise subprocess.TimeoutExpired(cmd, self.cli_timeout, output="".join(stdout_parts))
+
+                ready, _, _ = select.select([process.stdout], [], [], 1.0)
+                if ready:
+                    line = process.stdout.readline()
+                    if line:
+                        stdout_parts.append(line)
+                        progress_text = self.progress_text_from_line(provider, line)
+                        if progress_text and now - last_output_notice >= self.progress_output_interval:
+                            self.send_progress(chat_id, f"進捗: {progress_text}")
+                            last_output_notice = now
+                            last_periodic_notice = now
+                    elif process.poll() is not None:
+                        break
+                elif process.poll() is not None:
+                    break
+                elif now - last_periodic_notice >= self.progress_interval:
+                    elapsed = int(now - started_at)
+                    self.send_progress(chat_id, f"処理継続中です。経過 {elapsed} 秒。")
+                    last_periodic_notice = now
+
+            remaining, _ = process.communicate()
+            if remaining:
+                stdout_parts.append(remaining)
+            stdout = "".join(stdout_parts)
+            completed = subprocess.CompletedProcess(cmd, process.returncode, stdout=stdout, stderr=None)
+            if completed.returncode:
+                raise subprocess.CalledProcessError(completed.returncode, cmd, output=stdout, stderr=None)
+            return completed
+        finally:
+            if process.poll() is None:
+                process.kill()
+
     def ask_cli(self, prompt: str, chat_id: int, approval_override: str | None = None) -> str:
         provider = self.current_provider(chat_id)
         run_id = f"{chat_id}-{int(time.time() * 1000)}"
@@ -491,16 +569,7 @@ class PocketRelayBridge:
         else:
             cmd = self.build_cli_command(provider, self.build_initial_prompt(prompt), output_path)
         try:
-            completed = subprocess.run(
-                cmd,
-                cwd=self.workdir,
-                env=env,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=self.cli_timeout,
-            )
+            completed = self.run_cli_with_progress(cmd, provider, chat_id, env)
             new_session_id = self.extract_session_id(completed)
             if provider == "codex" and self.codex_sessions and new_session_id:
                 self.set_session_id(chat_id, provider, new_session_id)
@@ -510,6 +579,10 @@ class PocketRelayBridge:
             raise RuntimeError(
                 f"{self.provider_label(provider)} is not ready: missing executable '{missing_name}'. "
                 "Check the service PATH or cli_command_template."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"{self.provider_label(provider)} timed out after {int(exc.timeout)} seconds"
             ) from exc
         except subprocess.CalledProcessError as exc:
             snippet = (exc.stdout or "").strip()[-1200:]
@@ -722,6 +795,9 @@ class PocketRelayBridge:
                         f"session_id: {self.current_session_id(chat_id, provider) or '(none)'}",
                         f"approval_mode: {self.current_approval_mode(chat_id)}",
                         f"pending_approvals: {len(self.pending_approvals(chat_id))}",
+                        f"progress_updates: {self.progress_updates}",
+                        f"progress_interval_seconds: {self.progress_interval}",
+                        f"progress_output_interval_seconds: {self.progress_output_interval}",
                         f"workdir: {self.workdir}",
                         *diagnostic_lines,
                     ]
