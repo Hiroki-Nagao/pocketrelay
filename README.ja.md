@@ -27,8 +27,9 @@ Pocketrelay は単なる API ラッパーではありません。ホストされ
 - 各リクエストごとにローカルの AI CLI を実行します
 - `codex`、`claude`、`gemini` の組み込みプリセットがあります
 - `/provider codex` のような Telegram コマンドで、チャットごとに provider を切り替えられます
+- `/session` コマンドで Codex セッションを確認・リセットできます
 - プリセットで足りない場合は、完全なカスタムコマンドテンプレートも使えます
-- チャットごとに短い会話履歴をローカル保存します
+- 過去メッセージを毎回プロンプトへ詰め直さず、Codex では CLI の永続セッションを再開します
 
 ## 仕組み
 
@@ -74,7 +75,6 @@ Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の 
     "/home/your_user/.nvm/versions/node/v24.15.0/bin/codex",
     "exec",
     "--skip-git-repo-check",
-    "--ephemeral",
     "-C",
     "{workdir}",
     "-m",
@@ -84,9 +84,11 @@ Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の 
     "{prompt}"
   ],
   "workdir": "/home/your_user",
-  "max_history": 12,
+  "codex_sessions": true,
+  "codex_approval_mode": "queue",
   "telegram_timeout_seconds": 25,
-  "cli_timeout_seconds": 180,
+  "cli_timeout_seconds": 600,
+  "processing_message": "受け付けました。処理中です。",
   "system_prompt": "You are Codex, a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.\nKeep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,\nGitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.\nIf you are unsure, state uncertainty directly."
 }
 ```
@@ -96,7 +98,10 @@ Anthropic は `claude -p` と `--output-format` を、Google は Gemini CLI の 
 - `provider`: `codex`、`claude`、`gemini` のいずれか。チャットごとの `/provider` 上書きがない場合の既定値です
 - `model`: 選択した CLI にそのまま渡されます
 - `workdir`: CLI 起動時の作業ディレクトリです
+- `codex_sessions`: Codex CLI の永続セッションを使うかどうかです。`true` の場合、初回は新規セッションを作成し、以後は `codex exec resume` で再開します
+- `codex_approval_mode`: Codex の承認モードです。`queue`、`safe`、`read-only`、`full-auto`、`dangerous` が使えます
 - `cli_timeout_seconds`: ローカル CLI プロセスのタイムアウトです
+- `processing_message`: CLI 実行前に Telegram へ先に返すメッセージです。空文字にすると無効化できます
 - `system_prompt`: 内蔵のシステムプロンプトを差し替える任意設定です
 - `env`: 追加の環境変数を渡す任意オブジェクトです
 - `cli_command_template`: 完全なカスタムコマンドテンプレートを指定する任意設定です
@@ -183,6 +188,20 @@ python3 bridge.py
 - `/provider claude`
 - `/provider gemini`
 - `/provider reset`
+- `/session`
+- `/session status`
+- `/session new`
+- `/session reset`
+- `/approval`
+- `/approval status`
+- `/approval queue`
+- `/approval safe`
+- `/approval read-only`
+- `/approval full-auto`
+- `/approval dangerous`
+- `/approval reset`
+- `/approve <approval_id> [full-auto|dangerous]`
+- `/deny <approval_id>`
 
 `/status` はそのチャットの現在 provider、既定 provider、設定済みコマンド、バイナリの有無、readiness 診断、作業ディレクトリを表示します。
 
@@ -193,6 +212,16 @@ python3 bridge.py
 `/provider reset` は、そのチャットを `config.json` の既定 provider に戻します。
 
 provider の依存が不足している場合は、曖昧な subprocess エラーではなく、不足内容を明示して返します。
+
+`/session status` は現在の provider と保存済みセッションIDを表示します。
+
+`/session new` と `/session reset` は現在の provider の保存済みセッションIDを削除します。次の通常メッセージで新しい Codex セッションが作成されます。
+
+`/approval status` は現在の承認モードと保留中の承認キューを表示します。
+
+`/approval queue` は安全設定で実行し、承認が必要そうな失敗をキューに保存します。`/approve <id> full-auto` または `/approve <id> dangerous` で同じプロンプトを一度だけ再実行できます。
+
+`/approval safe` は追加フラグなし、`/approval read-only` は read-only sandbox、`/approval full-auto` は `--full-auto`、`/approval dangerous` は `--dangerously-bypass-approvals-and-sandbox` で Codex を実行します。`dangerous` はローカルマシンへの影響が大きいため、必要な一回だけ `/approve` で使う運用を推奨します。
 
 ## systemd ユーザーサービス
 
@@ -240,7 +269,7 @@ systemctl --user restart pocketrelay.service
 
 ## 制限事項
 
-- 文脈は、最近のチャット履歴を各リクエストに再投入することで近似しています
+- Codex の文脈は Codex CLI の永続セッションに任せます。Claude/Gemini では provider 側 CLI の headless 実行ごとの文脈になります
 - provider 切替はチャット単位ですが、model や追加環境変数は依然として `config.json` ベースのグローバル設定です
 - CLI の挙動は将来変わりうるため、上流のフラグ変更に応じてプリセット更新が必要になる場合があります
 - アクセス制御はユーザー名ベースで、単純ですが最も強固な方法ではありません

@@ -29,8 +29,9 @@ Why that helps:
 - Invokes a local AI CLI for each request
 - Supports built-in presets for `codex`, `claude`, and `gemini`
 - Can switch provider per chat through Telegram commands such as `/provider codex`
+- Can show and reset Codex sessions with `/session`
 - Allows a fully custom command template when presets are not enough
-- Stores a short local conversation history per chat
+- Resumes persisted Codex CLI sessions instead of injecting recent Telegram messages into every prompt
 
 ## How It Works
 
@@ -76,7 +77,6 @@ Minimal example:
     "/home/your_user/.nvm/versions/node/v24.15.0/bin/codex",
     "exec",
     "--skip-git-repo-check",
-    "--ephemeral",
     "-C",
     "{workdir}",
     "-m",
@@ -86,9 +86,11 @@ Minimal example:
     "{prompt}"
   ],
   "workdir": "/home/your_user",
-  "max_history": 12,
+  "codex_sessions": true,
+  "codex_approval_mode": "queue",
   "telegram_timeout_seconds": 25,
-  "cli_timeout_seconds": 180,
+  "cli_timeout_seconds": 600,
+  "processing_message": "受け付けました。処理中です。",
   "system_prompt": "You are Codex, a pragmatic coding assistant running through a Telegram bridge on a Raspberry Pi.\nKeep answers concise and actionable. Assume the user may ask about the local machine, software setup, shell commands,\nGitHub workflows, and coding tasks. You are replying inside Telegram, so avoid long answers and keep them scannable.\nIf you are unsure, state uncertainty directly."
 }
 ```
@@ -98,7 +100,10 @@ Important keys:
 - `provider`: one of `codex`, `claude`, `gemini` — the default provider used unless a chat overrides it with `/provider`
 - `model`: passed through to the selected CLI
 - `workdir`: working directory used when launching the CLI
+- `codex_sessions`: whether to use persisted Codex CLI sessions. When `true`, the first request creates a session and later requests use `codex exec resume`
+- `codex_approval_mode`: Codex approval mode: `queue`, `safe`, `read-only`, `full-auto`, or `dangerous`
 - `cli_timeout_seconds`: timeout for the local CLI process
+- `processing_message`: message sent to Telegram before launching the CLI; set it to an empty string to disable it
 - `system_prompt`: optional replacement for the built-in system prompt
 - `env`: optional object of extra environment variables
 - `cli_command_template`: optional string or string array for a fully custom command template
@@ -185,6 +190,20 @@ python3 bridge.py
 - `/provider claude`
 - `/provider gemini`
 - `/provider reset`
+- `/session`
+- `/session status`
+- `/session new`
+- `/session reset`
+- `/approval`
+- `/approval status`
+- `/approval queue`
+- `/approval safe`
+- `/approval read-only`
+- `/approval full-auto`
+- `/approval dangerous`
+- `/approval reset`
+- `/approve <approval_id> [full-auto|dangerous]`
+- `/deny <approval_id>`
 
 `/status` shows the current provider for that chat, the default provider, configured command, binary availability, readiness diagnostics, and working directory.
 
@@ -195,6 +214,16 @@ python3 bridge.py
 `/provider reset` returns the chat to the default provider from `config.json`.
 
 When a provider is missing dependencies, Pocketrelay reports that explicitly instead of failing with a vague subprocess error.
+
+`/session status` shows the current provider and saved session ID.
+
+`/session new` and `/session reset` clear the saved session ID for the current provider. The next normal message creates a new Codex session.
+
+`/approval status` shows the current approval mode and pending approval queue.
+
+`/approval queue` runs with safe settings and stores likely approval-related failures in the queue. Use `/approve <id> full-auto` or `/approve <id> dangerous` to rerun the same prompt once.
+
+`/approval safe` runs without extra approval flags, `/approval read-only` uses the read-only sandbox, `/approval full-auto` passes `--full-auto`, and `/approval dangerous` passes `--dangerously-bypass-approvals-and-sandbox`. Prefer using `dangerous` only for a specific queued retry.
 
 ## systemd User Service
 
@@ -242,7 +271,7 @@ To verify which binary the service will actually resolve, run `/status` in Teleg
 
 ## Limitations
 
-- This bridge approximates context by replaying recent chat history into each request
+- Codex context is handled by persisted Codex CLI sessions. Claude/Gemini context is limited to each headless CLI run unless those CLIs add compatible session support
 - Provider switching is chat-scoped, but model and extra environment variables are still shared globally through `config.json`
 - CLI behavior can change over time, so presets may need updates if upstream flags change
 - Access control is username-based, which is simple but not the strongest option

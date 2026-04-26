@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -69,6 +70,30 @@ CLI_PRESETS = {
     },
 }
 
+SESSION_ID_PATTERN = re.compile(
+    r"session id:\s*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
+APPROVAL_MODES = {"queue", "safe", "read-only", "full-auto", "dangerous"}
+APPROVAL_RETRY_MODES = {"full-auto", "dangerous"}
+APPROVAL_BLOCK_PATTERNS = (
+    "approval",
+    "approve",
+    "permission",
+    "sandbox",
+    "denied",
+    "not permitted",
+    "operation not permitted",
+    "read-only file system",
+    "network",
+    "temporary failure in name resolution",
+)
+
+
+class ApprovalRequired(RuntimeError):
+    def __init__(self, request_id: int, message: str):
+        super().__init__(message)
+        self.request_id = request_id
+
 
 def load_json(path: Path, default):
     if not path.exists():
@@ -127,23 +152,40 @@ class PocketRelayBridge:
         self.config = config
         self.state = load_json(
             STATE_PATH,
-            {"last_update_id": 0, "conversations": {}, "chat_settings": {}},
+            {
+                "last_update_id": 0,
+                "conversations": {},
+                "chat_settings": {},
+                "sessions": {},
+                "approval_requests": {},
+                "next_approval_id": 1,
+            },
         )
         self.bot_token = config["telegram_bot_token"]
         self.allowed_username = config["allowed_username"].lstrip("@").lower()
         self.provider = config.get("provider", "codex").lower()
         self.model = config.get("model", "gpt-5.4")
         self.max_history = int(config.get("max_history", 12))
+        self.codex_sessions = bool(config.get("codex_sessions", True))
+        self.codex_approval_mode = str(config.get("codex_approval_mode", "queue")).lower()
+        if self.codex_approval_mode not in APPROVAL_MODES:
+            self.codex_approval_mode = "queue"
         self.cli_timeout = int(
             config.get(
                 "cli_timeout_seconds",
                 config.get("codex_timeout_seconds", 180),
             )
         )
+        self.processing_message = str(
+            config.get("processing_message", "受け付けました。処理中です。")
+        ).strip()
         self.telegram_base = f"https://api.telegram.org/bot{self.bot_token}"
         self.workdir = str(Path(config.get("workdir", str(Path.home()))).expanduser())
         self.system_prompt = config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
         self.state.setdefault("chat_settings", {})
+        self.state.setdefault("sessions", {})
+        self.state.setdefault("approval_requests", {})
+        self.state.setdefault("next_approval_id", 1)
 
     def chat_settings(self, chat_id: int):
         return self.state["chat_settings"].setdefault(str(chat_id), {})
@@ -158,6 +200,54 @@ class PocketRelayBridge:
 
     def reset_provider(self, chat_id: int):
         self.chat_settings(chat_id).pop("provider", None)
+
+    def current_approval_mode(self, chat_id: int | None = None) -> str:
+        if chat_id is None:
+            return self.codex_approval_mode
+        mode = str(self.chat_settings(chat_id).get("approval_mode", self.codex_approval_mode)).lower()
+        return mode if mode in APPROVAL_MODES else self.codex_approval_mode
+
+    def set_approval_mode(self, chat_id: int, mode: str):
+        self.chat_settings(chat_id)["approval_mode"] = mode
+
+    def reset_approval_mode(self, chat_id: int):
+        self.chat_settings(chat_id).pop("approval_mode", None)
+
+    def session_settings(self, chat_id: int):
+        return self.state["sessions"].setdefault(str(chat_id), {})
+
+    def current_session_id(self, chat_id: int, provider: str):
+        return self.session_settings(chat_id).get(provider)
+
+    def set_session_id(self, chat_id: int, provider: str, session_id: str):
+        self.session_settings(chat_id)[provider] = session_id
+
+    def clear_session_id(self, chat_id: int, provider: str | None = None):
+        if provider is None:
+            self.state["sessions"].pop(str(chat_id), None)
+            return
+        self.session_settings(chat_id).pop(provider, None)
+
+    def pending_approvals(self, chat_id: int):
+        return self.state["approval_requests"].setdefault(str(chat_id), {})
+
+    def create_approval_request(self, chat_id: int, provider: str, prompt: str, error: str) -> int:
+        request_id = int(self.state.get("next_approval_id", 1))
+        self.state["next_approval_id"] = request_id + 1
+        self.pending_approvals(chat_id)[str(request_id)] = {
+            "provider": provider,
+            "prompt": prompt,
+            "error": error[-1200:],
+            "created_at": int(time.time()),
+        }
+        return request_id
+
+    def pop_approval_request(self, chat_id: int, request_id: str):
+        return self.pending_approvals(chat_id).pop(str(request_id), None)
+
+    def looks_like_approval_block(self, text: str) -> bool:
+        lower = text.lower()
+        return any(pattern in lower for pattern in APPROVAL_BLOCK_PATTERNS)
 
     def available_providers(self):
         providers = []
@@ -227,16 +317,8 @@ class PocketRelayBridge:
         if len(history) > self.max_history:
             del history[:-self.max_history]
 
-    def build_prompt(self, prompt: str, chat_id: int) -> str:
-        history = self.chat_history(chat_id)
-        lines = [self.system_prompt, "", "Conversation so far:"]
-        for item in history:
-            role = "User" if item["role"] == "user" else "Assistant"
-            lines.append(f"{role}: {item['content']}")
-        lines.append("")
-        lines.append(f"User: {prompt}")
-        lines.append("Assistant:")
-        return "\n".join(lines)
+    def build_initial_prompt(self, prompt: str) -> str:
+        return "\n".join([self.system_prompt, "", f"User: {prompt}", "Assistant:"])
 
     def build_cli_command(self, provider: str, prompt: str, output_path: Path):
         command_template = self.resolve_command_template(provider)
@@ -247,6 +329,48 @@ class PocketRelayBridge:
             "workdir": self.workdir,
         }
         return [part.format(**variables) for part in command_template]
+
+    def codex_approval_args(self, mode: str):
+        if mode == "read-only":
+            return ["-s", "read-only"]
+        if mode == "full-auto":
+            return ["--full-auto"]
+        if mode == "dangerous":
+            return ["--dangerously-bypass-approvals-and-sandbox"]
+        return []
+
+    def codex_binary(self):
+        return self.resolve_command_template("codex")[0]
+
+    def build_codex_new_session_command(self, prompt: str, output_path: Path, approval_mode: str):
+        return [
+            self.codex_binary(),
+            "exec",
+            "--skip-git-repo-check",
+            *self.codex_approval_args(approval_mode),
+            "-C",
+            self.workdir,
+            "-m",
+            self.model,
+            "-o",
+            str(output_path),
+            prompt,
+        ]
+
+    def build_codex_resume_command(self, session_id: str, prompt: str, output_path: Path, approval_mode: str):
+        return [
+            self.codex_binary(),
+            "exec",
+            "resume",
+            "--skip-git-repo-check",
+            *self.codex_approval_args(approval_mode),
+            "-m",
+            self.model,
+            "-o",
+            str(output_path),
+            session_id,
+            prompt,
+        ]
 
     def command_binary_status(self, provider: str):
         command = self.resolve_command_template(provider)
@@ -338,17 +462,34 @@ class PocketRelayBridge:
             )
         raise RuntimeError(f"Unsupported cli_response_mode: {mode}")
 
-    def ask_cli(self, prompt: str, chat_id: int) -> str:
+    def extract_session_id(self, completed: subprocess.CompletedProcess):
+        match = SESSION_ID_PATTERN.search(completed.stdout or "")
+        return match.group(1) if match else None
+
+    def ask_cli(self, prompt: str, chat_id: int, approval_override: str | None = None) -> str:
         provider = self.current_provider(chat_id)
         run_id = f"{chat_id}-{int(time.time() * 1000)}"
         output_path = BASE_DIR / f".last_message_{run_id}.txt"
-        full_prompt = self.build_prompt(prompt, chat_id)
-        cmd = self.build_cli_command(provider, full_prompt, output_path)
         env = dict(os.environ)
         env.update({str(k): str(v) for k, v in self.config.get("env", {}).items()})
         readiness, message, _ = self.cli_readiness(provider)
         if readiness != "ok":
             raise RuntimeError(f"{self.provider_label(provider)} is not ready: {message}")
+        configured_approval_mode = self.current_approval_mode(chat_id)
+        approval_mode = approval_override or configured_approval_mode
+        execution_approval_mode = "safe" if approval_mode == "queue" else approval_mode
+        session_id = self.current_session_id(chat_id, provider)
+        if provider == "codex" and self.codex_sessions:
+            if session_id:
+                cmd = self.build_codex_resume_command(session_id, prompt, output_path, execution_approval_mode)
+            else:
+                cmd = self.build_codex_new_session_command(
+                    self.build_initial_prompt(prompt),
+                    output_path,
+                    execution_approval_mode,
+                )
+        else:
+            cmd = self.build_cli_command(provider, self.build_initial_prompt(prompt), output_path)
         try:
             completed = subprocess.run(
                 cmd,
@@ -360,6 +501,9 @@ class PocketRelayBridge:
                 text=True,
                 timeout=self.cli_timeout,
             )
+            new_session_id = self.extract_session_id(completed)
+            if provider == "codex" and self.codex_sessions and new_session_id:
+                self.set_session_id(chat_id, provider, new_session_id)
             return self.extract_response(provider, completed, output_path)
         except FileNotFoundError as exc:
             missing_name = exc.filename or cmd[0]
@@ -369,6 +513,22 @@ class PocketRelayBridge:
             ) from exc
         except subprocess.CalledProcessError as exc:
             snippet = (exc.stdout or "").strip()[-1200:]
+            if provider == "codex" and approval_mode == "queue" and self.looks_like_approval_block(snippet):
+                request_id = self.create_approval_request(chat_id, provider, prompt, snippet)
+                raise ApprovalRequired(
+                    request_id,
+                    "\n".join(
+                        [
+                            "承認が必要そうな操作で止まりました。",
+                            f"approval_id: {request_id}",
+                            "再実行するには:",
+                            f"/approve {request_id} full-auto",
+                            f"/approve {request_id} dangerous",
+                            "取り消すには:",
+                            f"/deny {request_id}",
+                        ]
+                    ),
+                ) from exc
             raise RuntimeError(f"{self.provider_label(provider)} execution failed. {snippet}") from exc
         finally:
             try:
@@ -396,7 +556,110 @@ class PocketRelayBridge:
             return
         if text == "/reset":
             self.state["conversations"][str(chat_id)] = []
-            self.send_message(chat_id, "会話履歴をリセットしました。")
+            self.clear_session_id(chat_id)
+            self.send_message(chat_id, "セッションをリセットしました。")
+            return
+        if text.startswith("/session"):
+            parts = text.split()
+            action = parts[1].lower() if len(parts) > 1 else "status"
+            if action == "status":
+                session_id = self.current_session_id(chat_id, provider)
+                self.send_message(
+                    chat_id,
+                    "\n".join(
+                        [
+                            f"provider: {provider}",
+                            f"codex_sessions: {self.codex_sessions}",
+                            f"session_id: {session_id or '(none)'}",
+                            "usage: /session status | /session new | /session reset",
+                        ]
+                    ),
+                )
+                return
+            if action in {"new", "reset"}:
+                self.clear_session_id(chat_id, provider)
+                self.state["conversations"][str(chat_id)] = []
+                self.send_message(chat_id, "現在のセッションをクリアしました。次のメッセージで新しいセッションを開始します。")
+                return
+            self.send_message(chat_id, "usage: /session status | /session new | /session reset")
+            return
+        if text.startswith("/approval"):
+            parts = text.split()
+            action = parts[1].lower() if len(parts) > 1 else "status"
+            if action == "status":
+                pending = self.pending_approvals(chat_id)
+                pending_lines = [
+                    f"{request_id}: {item.get('provider', 'codex')} {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(item.get('created_at', 0)))}"
+                    for request_id, item in sorted(pending.items(), key=lambda pair: int(pair[0]))
+                ]
+                self.send_message(
+                    chat_id,
+                    "\n".join(
+                        [
+                            f"default_approval_mode: {self.codex_approval_mode}",
+                            f"approval_mode: {self.current_approval_mode(chat_id)}",
+                            "available: queue | safe | read-only | full-auto | dangerous | reset",
+                            "pending:",
+                            *(pending_lines or ["(none)"]),
+                        ]
+                    ),
+                )
+                return
+            if action == "reset":
+                self.reset_approval_mode(chat_id)
+                self.send_message(chat_id, f"approval_mode を既定値 {self.codex_approval_mode} に戻しました。")
+                return
+            if action not in APPROVAL_MODES:
+                self.send_message(chat_id, "usage: /approval status | /approval queue | /approval safe | /approval read-only | /approval full-auto | /approval dangerous | /approval reset")
+                return
+            self.set_approval_mode(chat_id, action)
+            self.send_message(chat_id, f"approval_mode を {action} に変更しました。")
+            return
+        if text.startswith("/deny"):
+            parts = text.split()
+            if len(parts) < 2:
+                self.send_message(chat_id, "usage: /deny <approval_id>")
+                return
+            request = self.pop_approval_request(chat_id, parts[1])
+            if not request:
+                self.send_message(chat_id, f"approval_id が見つかりません: {parts[1]}")
+                return
+            self.send_message(chat_id, f"approval_id {parts[1]} を取り消しました。")
+            return
+        if text.startswith("/approve"):
+            parts = text.split()
+            if len(parts) < 2:
+                self.send_message(chat_id, "usage: /approve <approval_id> [full-auto|dangerous]")
+                return
+            request_id = parts[1]
+            retry_mode = parts[2].lower() if len(parts) > 2 else "full-auto"
+            if retry_mode not in APPROVAL_RETRY_MODES:
+                self.send_message(chat_id, "承認再実行モードは full-auto または dangerous を指定してください。")
+                return
+            request = self.pop_approval_request(chat_id, request_id)
+            if not request:
+                self.send_message(chat_id, f"approval_id が見つかりません: {request_id}")
+                return
+            if request.get("provider") != "codex":
+                self.send_message(chat_id, "現在、承認キューの再実行は Codex provider のみ対応です。")
+                return
+            if self.processing_message:
+                self.send_message(chat_id, f"approval_id {request_id} を {retry_mode} で再実行します。")
+            settings = self.chat_settings(chat_id)
+            previous_provider = settings.get("provider")
+            self.set_provider(chat_id, "codex")
+            try:
+                answer = self.ask_cli(request["prompt"], chat_id, approval_override=retry_mode)
+                self.send_message(chat_id, answer)
+                log_line(f"approved request_id={request_id} chat_id={chat_id} mode={retry_mode}")
+            except Exception as exc:
+                log_line(f"error while handling approval request_id={request_id}: {exc}")
+                self.send_message(chat_id, f"承認再実行に失敗しました: {exc}")
+            finally:
+                if previous_provider is None:
+                    self.reset_provider(chat_id)
+                else:
+                    self.set_provider(chat_id, previous_provider)
             return
         if text.startswith("/provider"):
             parts = text.split()
@@ -434,7 +697,7 @@ class PocketRelayBridge:
         if text == "/help":
             self.send_message(
                 chat_id,
-                f"/start, /help, /reset, /status, /provider が使えます。通常メッセージは {self.provider_label(provider)} へ送ります。",
+                f"/start, /help, /reset, /status, /provider, /session, /approval, /approve, /deny が使えます。通常メッセージは {self.provider_label(provider)} へ送ります。",
             )
             return
         if text == "/status":
@@ -455,6 +718,10 @@ class PocketRelayBridge:
                         f"cli_binary_path: {cli_path}",
                         f"cli_readiness: {readiness}",
                         f"cli_readiness_message: {readiness_message}",
+                        f"codex_sessions: {self.codex_sessions}",
+                        f"session_id: {self.current_session_id(chat_id, provider) or '(none)'}",
+                        f"approval_mode: {self.current_approval_mode(chat_id)}",
+                        f"pending_approvals: {len(self.pending_approvals(chat_id))}",
                         f"workdir: {self.workdir}",
                         *diagnostic_lines,
                     ]
@@ -462,11 +729,14 @@ class PocketRelayBridge:
             )
             return
         try:
-            self.append_history(chat_id, "user", text)
+            if self.processing_message:
+                self.send_message(chat_id, self.processing_message)
             answer = self.ask_cli(text, chat_id)
-            self.append_history(chat_id, "assistant", answer)
             self.send_message(chat_id, answer)
             log_line(f"replied to chat_id={chat_id} username={username} provider={provider}")
+        except ApprovalRequired as exc:
+            log_line(f"approval queued chat_id={chat_id} request_id={exc.request_id}")
+            self.send_message(chat_id, str(exc))
         except Exception as exc:
             log_line(f"error while handling message: {exc}")
             self.send_message(chat_id, f"処理に失敗しました: {exc}")
